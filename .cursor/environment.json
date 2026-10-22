@@ -1,0 +1,9 @@
+{
+  "install": "(command -v yarn || npm install -g yarn@1.22.22 || sudo npm install -g yarn@1.22.22) && yarn install --frozen-lockfile",
+  "terminals": [
+    {
+      "name": "Excalidraw dev server",
+      "command": "yarn start"
+    }
+  ]
+}
