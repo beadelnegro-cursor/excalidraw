@@ -6,8 +6,7 @@ import {
 } from "@excalidraw/fractional-indexing";
 
 import { mutateElement, newElementWith } from "./mutateElement";
-import { getBoundTextElementId } from "./textElement";
-import { hasBoundTextElement } from "./typeChecks";
+import { getBoundTextElements } from "./textElement";
 
 import { isNonDeletedElement } from ".";
 
@@ -88,25 +87,17 @@ export const validateFractionalIndices = (
     if (
       includeBoundTextValidation &&
       elementsMap &&
-      hasBoundTextElement(elements[i]) &&
       isNonDeletedElement(elements[i])
     ) {
       const container = elements[i];
-      const boundTextElementId = getBoundTextElementId(container);
-      const text = boundTextElementId
-        ? elementsMap.get(boundTextElementId)
-        : null;
-
-      if (
-        text &&
-        isNonDeletedElement(text) &&
-        text.index! <= container.index!
-      ) {
-        errorMessages.push(
-          `Fractional indices invariant for bound elements has been compromised: "${stringifyElement(
-            text,
-          )}", "${stringifyElement(container)}"`,
-        );
+      for (const text of getBoundTextElements(container, elementsMap)) {
+        if (text.index! <= container.index!) {
+          errorMessages.push(
+            `Fractional indices invariant for bound elements has been compromised: "${stringifyElement(
+              text,
+            )}", "${stringifyElement(container)}"`,
+          );
+        }
       }
     }
   }

@@ -50,6 +50,7 @@ import {
   isArrowElement,
   isBindableElement,
   isBoundToContainer,
+  isTableCell,
   isTextElement,
 } from "./typeChecks";
 
@@ -2067,6 +2068,10 @@ export class ElementsDelta implements DeltaContainer<SceneElementsMap> {
     >();
 
     for (const element of changed.values()) {
+      // Cell geometry is the table layout, not the single-label redraw.
+      if (isTableCell(element)) {
+        continue;
+      }
       if (isBoundToContainer(element)) {
         const { containerId } = element as ExcalidrawTextElement;
         const container = containerId ? elements.get(containerId) : undefined;

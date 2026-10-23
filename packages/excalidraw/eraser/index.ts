@@ -4,6 +4,7 @@ import {
   computeBoundTextPosition,
   doBoundsIntersect,
   getBoundTextElement,
+  getBoundTextElements,
   getElementBounds,
   getElementLineSegments,
   getFreedrawOutlineAsSegments,
@@ -25,8 +26,7 @@ import {
 import { getElementsInGroup } from "@excalidraw/element";
 
 import { shouldTestInside } from "@excalidraw/element";
-import { hasBoundTextElement, isBoundToContainer } from "@excalidraw/element";
-import { getBoundTextElementId } from "@excalidraw/element";
+import { isBoundToContainer } from "@excalidraw/element";
 
 import type { Bounds } from "@excalidraw/common";
 
@@ -128,17 +128,7 @@ export class EraserTrail extends AnimatedTrail {
             this.groupsToErase.delete(shallowestGroupId);
           }
 
-          if (isBoundToContainer(element)) {
-            this.elementsToErase.delete(element.containerId);
-          }
-
-          if (hasBoundTextElement(element)) {
-            const boundText = getBoundTextElementId(element);
-
-            if (boundText) {
-              this.elementsToErase.delete(boundText);
-            }
-          }
+          this.forgetElementAndBoundText(element, candidateElementsMap);
 
           this.elementsToErase.delete(element.id);
         }
@@ -165,17 +155,7 @@ export class EraserTrail extends AnimatedTrail {
             this.groupsToErase.add(shallowestGroupId);
           }
 
-          if (hasBoundTextElement(element)) {
-            const boundText = getBoundTextElementId(element);
-
-            if (boundText) {
-              this.elementsToErase.add(boundText);
-            }
-          }
-
-          if (isBoundToContainer(element)) {
-            this.elementsToErase.add(element.containerId);
-          }
+          this.rememberElementAndBoundText(element, candidateElementsMap);
 
           this.elementsToErase.add(element.id);
         }
@@ -190,6 +170,41 @@ export class EraserTrail extends AnimatedTrail {
     super.clearTrails();
     this.elementsToErase.clear();
     this.groupsToErase.clear();
+  }
+
+  /** Table and cells (or a shape and its label) are erased together. */
+  private boundTextIds(
+    element: ExcalidrawElement,
+    elementsMap: ElementsMap,
+  ): ExcalidrawElement["id"][] {
+    const container = isBoundToContainer(element)
+      ? elementsMap.get(element.containerId) ?? element
+      : element;
+    return getBoundTextElements(container, elementsMap).map((text) => text.id);
+  }
+
+  private rememberElementAndBoundText(
+    element: ExcalidrawElement,
+    elementsMap: ElementsMap,
+  ) {
+    if (isBoundToContainer(element)) {
+      this.elementsToErase.add(element.containerId);
+    }
+    for (const id of this.boundTextIds(element, elementsMap)) {
+      this.elementsToErase.add(id);
+    }
+  }
+
+  private forgetElementAndBoundText(
+    element: ExcalidrawElement,
+    elementsMap: ElementsMap,
+  ) {
+    if (isBoundToContainer(element)) {
+      this.elementsToErase.delete(element.containerId);
+    }
+    for (const id of this.boundTextIds(element, elementsMap)) {
+      this.elementsToErase.delete(id);
+    }
   }
 }
 

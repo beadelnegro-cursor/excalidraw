@@ -48,6 +48,7 @@ import {
   isIframeLikeElement,
   isImageElement,
   isLinearElement,
+  isTableElement,
   isTextElement,
 } from "./typeChecks";
 import {
@@ -92,6 +93,8 @@ export const shouldTestInside = (element: ExcalidrawElement) => {
   const isDraggableFromInside =
     (hasBackground(element.type) && !isTransparent(element.backgroundColor)) ||
     hasBoundTextElement(element) ||
+    // A table's cells are not a single label, but the grid is one solid target.
+    isTableElement(element) ||
     isIframeLikeElement(element) ||
     isTextElement(element);
 
