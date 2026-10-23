@@ -446,6 +446,7 @@ export const isEligibleFrameChildType = (type: ElementOrToolType) => {
   switch (type) {
     case "rectangle":
     case "stickynote":
+    case "table":
     case "diamond":
     case "ellipse":
     case "arrow":

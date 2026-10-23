@@ -143,7 +143,13 @@ export type ActionName =
   | "wrapSelectionInFrame"
   | "toggleWrap"
   | "toggleShapeSwitch"
-  | "togglePolygon";
+  | "togglePolygon"
+  | "insertTableRowAbove"
+  | "insertTableRowBelow"
+  | "insertTableColumnLeft"
+  | "insertTableColumnRight"
+  | "deleteTableRow"
+  | "deleteTableColumn";
 
 export type PanelComponentProps = {
   elements: readonly ExcalidrawElement[];

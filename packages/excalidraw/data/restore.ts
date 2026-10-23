@@ -238,6 +238,7 @@ export const AllowedExcalidrawActiveTools: Record<
   arrow: true,
   freedraw: true,
   stickynote: true,
+  table: true,
   eraser: false,
   custom: true,
   frame: true,
