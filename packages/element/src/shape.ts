@@ -46,6 +46,7 @@ import type {
 } from "@excalidraw/excalidraw/scene/types";
 
 import { elementWithCanvasCache } from "./renderElement";
+import { getTableCellElements, getTableLayout } from "./table";
 
 import {
   canBecomePolygon,
@@ -74,17 +75,63 @@ import type {
   ExcalidrawFreeDrawElement,
   ElementsMap,
   ExcalidrawLineElement,
+  ExcalidrawTableElement,
   Arrowhead,
 } from "./types";
 
 import type { Drawable, Options } from "roughjs/bin/core";
 import type { Point as RoughPoint } from "roughjs/bin/geometry";
 
+/**
+ * Identity for a table's roughjs shape. `version` covers structure and style;
+ * cell text is included because it changes effective row heights without
+ * necessarily replacing the table object first.
+ */
+export const tableShapeCacheKey = (
+  element: ExcalidrawTableElement,
+  elementsMap: ElementsMap | null | undefined,
+) => {
+  let hash = ((5381 << 5) + 5381 + element.version) | 0;
+  hash = ((hash << 5) + hash + element.versionNonce) | 0;
+  if (elementsMap) {
+    for (const cell of getTableCellElements(element, elementsMap)) {
+      hash = ((hash << 5) + hash + cell.version) | 0;
+      hash = ((hash << 5) + hash + cell.versionNonce) | 0;
+      hash = ((hash << 5) + hash + cell.fontSize) | 0;
+      hash = ((hash << 5) + hash + Math.round(cell.lineHeight * 1000)) | 0;
+      for (let index = 0; index < cell.originalText.length; index++) {
+        hash = ((hash << 5) + hash + cell.originalText.charCodeAt(index)) | 0;
+      }
+    }
+  }
+  return hash >>> 0;
+};
+
+/** Positions of the internal grid lines, scaled into the element's box. */
+const internalGridOffsets = (sizes: readonly number[], total: number) => {
+  const sum = sizes.reduce((acc, size) => acc + size, 0);
+  if (sizes.length < 2 || !(sum > 0) || !(total > 0)) {
+    return [];
+  }
+  const scale = total / sum;
+  const offsets: number[] = [];
+  let cursor = 0;
+  for (let index = 0; index < sizes.length - 1; index++) {
+    cursor += sizes[index] * scale;
+    offsets.push(cursor);
+  }
+  return offsets;
+};
+
 export class ShapeCache {
   private static rg = new RoughGenerator();
   private static cache = new WeakMap<
     ExcalidrawElement,
-    { shape: ElementShape; theme: AppState["theme"] }
+    {
+      shape: ElementShape;
+      theme: AppState["theme"];
+      tableShapeKey?: number;
+    }
   >();
 
   /**
@@ -127,16 +174,29 @@ export class ShapeCache {
       embedsValidationStatus: EmbedsValidationStatus;
       theme: AppState["theme"];
     } | null,
+    elementsMap?: ElementsMap | null,
   ) => {
+    const theme = renderConfig ? renderConfig.theme : null;
     // when exporting, always regenerated to guarantee the latest shape
-    const cachedShape = renderConfig?.isExporting
+    const cached = renderConfig?.isExporting
       ? undefined
-      : ShapeCache.get(element, renderConfig ? renderConfig.theme : null);
-
+      : ShapeCache.cache.get(element);
+    const tableShapeKey =
+      element.type === "table"
+        ? tableShapeCacheKey(element, elementsMap)
+        : undefined;
     // `null` indicates no rc shape applicable for this element type,
-    // but it's considered a valid cache value (= do not regenerate)
-    if (cachedShape !== undefined) {
-      return cachedShape;
+    // but it's considered a valid cache value (= do not regenerate).
+    // Tables also miss when version or cell text changed: the grid depends
+    // on both, and the on-screen bitmap is keyed the same way.
+    if (
+      cached &&
+      (theme === null || cached.theme === theme) &&
+      (element.type !== "table" || cached.tableShapeKey === tableShapeKey)
+    ) {
+      return cached.shape as T["type"] extends keyof ElementShapes
+        ? ElementShapes[T["type"]]
+        : ElementShape;
     }
 
     elementWithCanvasCache.delete(element);
@@ -150,6 +210,7 @@ export class ShapeCache {
         embedsValidationStatus: null,
         theme: THEME.LIGHT,
       },
+      elementsMap,
     ) as T["type"] extends keyof ElementShapes
       ? ElementShapes[T["type"]]
       : Drawable | null;
@@ -158,6 +219,7 @@ export class ShapeCache {
       ShapeCache.cache.set(element, {
         shape,
         theme: renderConfig?.theme || THEME.LIGHT,
+        tableShapeKey,
       });
     }
 
@@ -782,11 +844,39 @@ const _generateElementShape = (
     embedsValidationStatus: EmbedsValidationStatus | null;
     theme?: AppState["theme"];
   },
+  elementsMap?: ElementsMap | null,
 ): ElementShape => {
   const isDarkMode = theme === THEME.DARK;
   switch (element.type) {
+    case "table": {
+      const layout = getTableLayout(element, elementsMap ?? []);
+      const { width, height } = element;
+      const options = generateRoughOptions(element, false, isDarkMode);
+      const shapes: Drawable[] = [
+        generator.rectangle(0, 0, width, height, options),
+      ];
+      let seedOffset = 0;
+      for (const x of internalGridOffsets(layout.columnWidths, width)) {
+        shapes.push(
+          generator.line(x, 0, x, height, {
+            ...options,
+            fill: undefined,
+            seed: element.seed + ++seedOffset,
+          }),
+        );
+      }
+      for (const y of internalGridOffsets(layout.rowHeights, height)) {
+        shapes.push(
+          generator.line(0, y, width, y, {
+            ...options,
+            fill: undefined,
+            seed: element.seed + ++seedOffset,
+          }),
+        );
+      }
+      return shapes;
+    }
     case "rectangle":
-    case "table":
     case "iframe":
     case "embeddable": {
       let shape: ElementShapes[typeof element.type];
