@@ -15,6 +15,8 @@ import {
   isArrowElement,
   isElbowArrow,
   isLinearElement,
+  isTableCell,
+  isTableElement,
   isUsingAdaptiveRadius,
 } from "@excalidraw/element";
 
@@ -654,6 +656,9 @@ export const getConversionTypeFromElements = (
 
   let canBeLinear = false;
   for (const element of elements) {
+    if (isTableElement(element) || isTableCell(element)) {
+      continue;
+    }
     if (isConvertibleGenericType(element.type)) {
       // generic type conversion have preference
       return "generic";
@@ -847,6 +852,11 @@ const convertElementType = <
   targetType: ConvertibleTypes,
   app: AppClassProperties,
 ): NonDeletedExcalidrawElement => {
+  // Tables own a grid of cells; converting the container would drop that structure.
+  if (isTableElement(element)) {
+    return element;
+  }
+
   if (!isValidConversion(element.type, targetType)) {
     if (!isProdEnv()) {
       throw Error(`Invalid conversion from ${element.type} to ${targetType}.`);

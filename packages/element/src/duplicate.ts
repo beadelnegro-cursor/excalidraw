@@ -29,13 +29,12 @@ import { normalizeElementOrder } from "./sortElements";
 import { bumpVersion } from "./mutateElement";
 
 import {
-  hasBoundTextElement,
   isArrowElement,
   isBoundToContainer,
   isFrameLikeElement,
 } from "./typeChecks";
 
-import { getBoundTextElement, getContainerElement } from "./textElement";
+import { getBoundTextElements, getContainerElement } from "./textElement";
 
 import { fixDuplicatedBindingsAfterDuplication } from "./binding";
 
@@ -386,9 +385,8 @@ export const duplicateElements = (
     // text container
     // -------------------------------------------------------------------------
 
-    if (hasBoundTextElement(element)) {
-      const boundTextElement = getBoundTextElement(element, elementsMap);
-
+    const boundTextElements = getBoundTextElements(element, elementsMap);
+    if (boundTextElements.length) {
       const targetIndex = findLastIndex(elementsWithDuplicates, (el) => {
         return (
           el.id === element.id ||
@@ -396,20 +394,19 @@ export const duplicateElements = (
         );
       });
 
-      if (boundTextElement) {
-        insertBeforeOrAfterIndex(
-          targetIndex,
-          copyElements([element, boundTextElement]),
-        );
-      } else {
-        insertBeforeOrAfterIndex(targetIndex, copyElements(element));
-      }
+      insertBeforeOrAfterIndex(
+        targetIndex,
+        copyElements([element, ...boundTextElements]),
+      );
 
       continue;
     }
 
     if (isBoundToContainer(element)) {
       const container = getContainerElement(element, elementsMap);
+      const boundTextElements = container
+        ? getBoundTextElements(container, elementsMap)
+        : [];
 
       const targetIndex = findLastIndex(elementsWithDuplicates, (el) => {
         return el.id === element.id || el.id === container?.id;
@@ -418,7 +415,11 @@ export const duplicateElements = (
       if (container) {
         insertBeforeOrAfterIndex(
           targetIndex,
-          copyElements([container, element]),
+          copyElements(
+            boundTextElements.length
+              ? [container, ...boundTextElements]
+              : [container, element],
+          ),
         );
       } else {
         insertBeforeOrAfterIndex(targetIndex, copyElements(element));

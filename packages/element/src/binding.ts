@@ -2539,6 +2539,8 @@ export class BoundElement {
         }
 
         if (isTextElement(boundElement)) {
+          // A table owns every cell. A shape owns one label, so a second
+          // text binding is a conflict and has to be dropped.
           if (isTableElement(bindableElement)) {
             if (
               !bindableElement.boundElements?.find(
@@ -2662,11 +2664,12 @@ export class BindableElement {
             return;
           }
           const boundElements = bindableElement.boundElements?.slice() ?? [];
-          // check if this is the last element in the array, if not, there is an previously bound text which should be unbound
-          if (
+          // A table keeps every cell. A shape keeps only its last label.
+          const keepsThisText =
+            isTableElement(bindableElement) ||
             boundElements.reverse().find((x) => x.type === "text")?.id ===
-            boundElement.id
-          ) {
+              boundElement.id;
+          if (keepsThisText) {
             if (boundElement.containerId !== bindableElement.id) {
               // rebind if not bound already!
               updateElementWith(boundElement, {

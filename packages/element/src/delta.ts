@@ -2093,6 +2093,7 @@ export class ElementsDelta implements DeltaContainer<SceneElementsMap> {
             });
           }
         }
+        // Cell geometry is the table layout, not the single-label redraw.
         continue;
       }
 
@@ -2126,6 +2127,12 @@ export class ElementsDelta implements DeltaContainer<SceneElementsMap> {
     for (const { container, boundText } of boxesToRedraw.values()) {
       if (container.isDeleted || boundText.isDeleted) {
         // skip redraw if one of them is deleted, as it would not result in a meaningful redraw
+        continue;
+      }
+
+      // A table cell is laid out only with its table. The single-label redraw
+      // would place every cell in the same slot.
+      if (isTableCell(boundText) && !isTableElement(container)) {
         continue;
       }
 

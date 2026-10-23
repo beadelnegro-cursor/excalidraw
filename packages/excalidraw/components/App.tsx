@@ -134,6 +134,7 @@ import {
   isElbowArrow,
   isBindableElement,
   isTextElement,
+  isTableCell,
   isStickyNoteElement,
   isTableElement,
   getTableCellElements,
@@ -4673,7 +4674,13 @@ class App extends React.Component<AppProps, AppState> {
     this.scene.replaceAllElements(nextElements);
 
     duplicatedElements.forEach((newElement) => {
-      if (isTextElement(newElement) && isBoundToContainer(newElement)) {
+      // Table cells already carry their grid position. The single-label
+      // redraw would stack every cell on the same point.
+      if (
+        isTextElement(newElement) &&
+        isBoundToContainer(newElement) &&
+        !isTableCell(newElement)
+      ) {
         const container = getContainerElement(
           newElement,
           this.scene.getElementsMapIncludingDeleted(),
