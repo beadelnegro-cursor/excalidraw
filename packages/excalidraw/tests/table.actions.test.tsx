@@ -1,16 +1,41 @@
 import React from "react";
 
-import { DEFAULT_TABLE_HEIGHT, DEFAULT_TABLE_WIDTH } from "@excalidraw/common";
+import { act } from "@testing-library/react";
 
-import { isTableCell } from "@excalidraw/element";
+import {
+  DEFAULT_TABLE_HEIGHT,
+  DEFAULT_TABLE_WIDTH,
+  FONT_FAMILY,
+  STROKE_WIDTH,
+} from "@excalidraw/common";
 
-import type { ExcalidrawTableElement } from "@excalidraw/element/types";
+import { getTargetElements, isTableCell } from "@excalidraw/element";
 
-import { Excalidraw } from "../index";
+import type {
+  ExcalidrawTableElement,
+  ExcalidrawTextElement,
+  NonDeleted,
+} from "@excalidraw/element/types";
+
+import {
+  actionChangeBackgroundColor,
+  actionChangeFontFamily,
+  actionChangeFontSize,
+  actionChangeOpacity,
+  actionChangeStrokeColor,
+  actionChangeStrokeWidth,
+  actionChangeTextAlign,
+} from "../actions";
+import {
+  actionChangeSloppiness,
+  actionChangeStrokeStyle,
+} from "../actions/actionProperties";
 import {
   cleanAppStateForExport,
   clearAppStateForLocalStorage,
 } from "../appState";
+import { getShapeActionPredicates } from "../components/shapeActionPredicates";
+import { Excalidraw } from "../index";
 
 import { API } from "./helpers/api";
 import { Keyboard, Pointer, UI } from "./helpers/ui";
@@ -22,13 +47,13 @@ const mouse = new Pointer("mouse");
 
 const liveTables = () =>
   h.elements.filter(
-    (element): element is ExcalidrawTableElement =>
+    (element): element is NonDeleted<ExcalidrawTableElement> =>
       element.type === "table" && !element.isDeleted,
   );
 
 const liveCells = (tableId: string) =>
   h.elements.filter(
-    (element) =>
+    (element): element is ExcalidrawTextElement =>
       isTableCell(element) &&
       !element.isDeleted &&
       element.containerId === tableId,
@@ -204,6 +229,130 @@ describe("table row and column actions", () => {
     expect(restored.rows).toHaveLength(1);
     expect(restored.columns).toHaveLength(3);
     expect(liveCells(restored.id)).toHaveLength(3);
+  });
+});
+
+describe("table styles", () => {
+  beforeEach(async () => {
+    await render(<Excalidraw handleKeyboardGlobally={true} />);
+    mouse.reset();
+  });
+
+  it("applies stroke, background, and font to the selected table and its cells, and undo restores them", () => {
+    const table = insertTableAt(300, 300);
+    API.setSelectedElements([table]);
+    const cellsBefore = liveCells(table.id).map((cell) => ({
+      id: cell.id,
+      x: cell.x,
+      y: cell.y,
+      strokeWidth: cell.strokeWidth,
+      backgroundColor: cell.backgroundColor,
+      fontSize: cell.fontSize,
+      fontFamily: cell.fontFamily,
+      textAlign: cell.textAlign,
+      opacity: cell.opacity,
+    }));
+    const original = {
+      strokeColor: table.strokeColor,
+      backgroundColor: table.backgroundColor,
+      strokeWidth: table.strokeWidth,
+      strokeStyle: table.strokeStyle,
+      roughness: table.roughness,
+      opacity: table.opacity,
+      width: table.width,
+      height: table.height,
+    };
+
+    const predicates = getShapeActionPredicates(
+      h.state,
+      getTargetElements(h.elements, h.state),
+      h.app.scene.getNonDeletedElementsMap(),
+      h.app,
+    );
+    expect(predicates.strokeColor).toBe(true);
+    expect(predicates.backgroundColor).toBe(true);
+    expect(predicates.strokeWidth).toBe(true);
+    expect(predicates.strokeStyle).toBe(true);
+    expect(predicates.sloppiness).toBe(true);
+    expect(predicates.text).toBe(true);
+    expect(predicates.textAlign).toBe(true);
+
+    let undoEntries = API.getUndoStack().length;
+    const apply = (
+      action: Parameters<typeof h.app.actionManager.executeAction>[0],
+      value: Parameters<typeof h.app.actionManager.executeAction>[2],
+    ) => {
+      act(() => {
+        h.app.actionManager.executeAction(action, "ui", value);
+      });
+      undoEntries += 1;
+      expect(API.getUndoStack()).toHaveLength(undoEntries);
+    };
+
+    apply(actionChangeStrokeColor, { color: "#ff0000" });
+    apply(actionChangeBackgroundColor, { color: "#fab005" });
+    apply(actionChangeStrokeWidth, "bold");
+    apply(actionChangeStrokeStyle, "dashed");
+    apply(actionChangeSloppiness, 0);
+    apply(actionChangeOpacity, 40);
+    apply(actionChangeFontSize, 36);
+    apply(actionChangeFontFamily, {
+      currentItemFontFamily: FONT_FAMILY.Helvetica,
+    });
+    apply(actionChangeTextAlign, "center");
+
+    const styled = liveTables()[0];
+    expect(styled.strokeColor).toBe("#ff0000");
+    expect(styled.backgroundColor).toBe("#fab005");
+    expect(styled.strokeWidth).toBe(STROKE_WIDTH.bold);
+    expect(styled.strokeStyle).toBe("dashed");
+    expect(styled.roughness).toBe(0);
+    expect(styled.opacity).toBe(40);
+    expect(styled.width).toBe(original.width);
+    expect(styled.height).toBe(original.height);
+
+    const styledCells = liveCells(table.id);
+    expect(styledCells).toHaveLength(cellsBefore.length);
+    for (const cell of styledCells) {
+      const before = cellsBefore.find((item) => item.id === cell.id)!;
+      expect(cell.strokeColor).toBe("#ff0000");
+      expect(cell.backgroundColor).toBe(before.backgroundColor);
+      expect(cell.strokeWidth).toBe(before.strokeWidth);
+      expect(cell.opacity).toBe(40);
+      expect(cell.fontSize).toBe(36);
+      expect(cell.fontFamily).toBe(FONT_FAMILY.Helvetica);
+      expect(cell.textAlign).toBe("center");
+      expect(cell.x).toBe(before.x);
+      expect(cell.y).toBe(before.y);
+    }
+
+    Keyboard.undo();
+    expect(liveCells(table.id).every((cell) => cell.textAlign === "left")).toBe(
+      true,
+    );
+    expect(liveCells(table.id).every((cell) => cell.fontSize === 36)).toBe(
+      true,
+    );
+
+    for (let step = 0; step < 8; step++) {
+      Keyboard.undo();
+    }
+
+    const restored = liveTables()[0];
+    expect(restored.strokeColor).toBe(original.strokeColor);
+    expect(restored.backgroundColor).toBe(original.backgroundColor);
+    expect(restored.strokeWidth).toBe(original.strokeWidth);
+    expect(restored.strokeStyle).toBe(original.strokeStyle);
+    expect(restored.roughness).toBe(original.roughness);
+    expect(restored.opacity).toBe(original.opacity);
+    for (const cell of liveCells(table.id)) {
+      const before = cellsBefore.find((item) => item.id === cell.id)!;
+      expect(cell.strokeColor).toBe(original.strokeColor);
+      expect(cell.fontSize).toBe(before.fontSize);
+      expect(cell.fontFamily).toBe(before.fontFamily);
+      expect(cell.textAlign).toBe(before.textAlign);
+      expect(cell.opacity).toBe(before.opacity);
+    }
   });
 });
 

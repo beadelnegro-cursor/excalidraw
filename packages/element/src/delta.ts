@@ -50,6 +50,7 @@ import {
   isArrowElement,
   isBindableElement,
   isBoundToContainer,
+  isTableCell,
   isTextElement,
 } from "./typeChecks";
 
@@ -1823,7 +1824,11 @@ export class ElementsDelta implements DeltaContainer<SceneElementsMap> {
         isTextElement(element) &&
         !element.text.trim() &&
         !element.boundElements?.length &&
-        !isArrowElement(elements.get(element.containerId ?? ""))
+        !isArrowElement(elements.get(element.containerId ?? "")) &&
+        // A table cell is empty until someone types, but its font and stroke
+        // are the cell. Treating it as invisible empty text makes a font
+        // change undo together with the next grid edit.
+        !isTableCell(element)
       ) {
         return null;
       }

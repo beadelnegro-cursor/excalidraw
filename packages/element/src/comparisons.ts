@@ -3,6 +3,7 @@ import type { ElementOrToolType } from "@excalidraw/excalidraw/types";
 export const hasBackground = (type: ElementOrToolType) =>
   type === "rectangle" ||
   type === "stickynote" ||
+  type === "table" ||
   type === "iframe" ||
   type === "embeddable" ||
   type === "ellipse" ||
@@ -19,6 +20,7 @@ export const hasFillStyle = (type: ElementOrToolType) =>
 export const hasStrokeColor = (type: ElementOrToolType) =>
   type === "rectangle" ||
   type === "stickynote" ||
+  type === "table" ||
   type === "ellipse" ||
   type === "diamond" ||
   type === "freedraw" ||
@@ -30,6 +32,7 @@ export const hasStrokeColor = (type: ElementOrToolType) =>
 
 export const hasStrokeWidth = (type: ElementOrToolType) =>
   type === "rectangle" ||
+  type === "table" ||
   type === "iframe" ||
   type === "embeddable" ||
   type === "ellipse" ||
@@ -41,6 +44,7 @@ export const hasStrokeWidth = (type: ElementOrToolType) =>
 
 export const hasStrokeStyle = (type: ElementOrToolType) =>
   type === "rectangle" ||
+  type === "table" ||
   type === "iframe" ||
   type === "embeddable" ||
   type === "ellipse" ||

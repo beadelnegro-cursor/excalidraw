@@ -47,6 +47,7 @@ import { getArrowheadForPicker } from "@excalidraw/element";
 
 import {
   getBoundTextElement,
+  getBoundTextElements,
   getBaseFontSize,
   getBaseFontSizeUpdate,
   redrawTextBoundingBox,
@@ -59,6 +60,7 @@ import {
   isLinearElement,
   isLineElement,
   isStickyNoteElement,
+  isTableElement,
   isTextElement,
   isUsingAdaptiveRadius,
 } from "@excalidraw/element";
@@ -190,6 +192,58 @@ const getStylesPanelInfo = (app: AppClassProperties) => {
   } as const;
 };
 
+/** A table's cells share one font. A rectangle's single label is unchanged. */
+const hasEditableTextStyle = (
+  element: ExcalidrawElement,
+  elementsMap: ElementsMap,
+) =>
+  isTextElement(element) ||
+  getBoundTextElement(element, elementsMap) != null ||
+  (isTableElement(element) &&
+    getBoundTextElements(element, elementsMap).length > 0);
+
+const readTextStyle = <T extends Primitive>(
+  element: ExcalidrawElement,
+  elementsMap: ElementsMap,
+  read: (text: ExcalidrawTextElement) => T,
+): T | null => {
+  if (isTextElement(element)) {
+    return read(element);
+  }
+  const label = getBoundTextElement(element, elementsMap);
+  if (label) {
+    return read(label);
+  }
+  if (isTableElement(element)) {
+    return reduceToCommonValue(
+      getBoundTextElements(element, elementsMap),
+      read,
+    );
+  }
+  return null;
+};
+
+/**
+ * Font actions redraw a single label into its container. A table cell is not
+ * that label: redrawing it would resize the grid and park every cell in the
+ * table's center. The font fields are already on the cloned element.
+ */
+const redrawBoundLabel = (
+  textElement: ExcalidrawTextElement,
+  container: ExcalidrawElement | null,
+  app: AppClassProperties,
+) => {
+  if (container && isTableElement(container)) {
+    return;
+  }
+  redrawTextBoundingBox(
+    textElement,
+    container,
+    app.scene,
+    app.renderEnvironment,
+  );
+};
+
 export const changeProperty = (
   elements: readonly ExcalidrawElement[],
   appState: AppState,
@@ -314,12 +368,7 @@ const changeFontSize = (
           oldElement,
           getBaseFontSizeUpdate(oldElement, newFontSize, elementsMap),
         );
-        redrawTextBoundingBox(
-          newElement,
-          container,
-          app.scene,
-          app.renderEnvironment,
-        );
+        redrawBoundLabel(newElement, container, app);
 
         newElement = offsetElementAfterFontResize(
           oldElement,
@@ -1058,24 +1107,15 @@ export const actionChangeFontSize = register<ExcalidrawTextElement["fontSize"]>(
                 app,
                 (element) => {
                   const elementsMap = app.scene.getNonDeletedElementsMap();
-                  if (isTextElement(element)) {
-                    return getBaseFontSize(element, elementsMap);
-                  }
-                  const boundTextElement = getBoundTextElement(
-                    element,
-                    elementsMap,
+                  return readTextStyle(element, elementsMap, (text) =>
+                    getBaseFontSize(text, elementsMap),
                   );
-                  if (boundTextElement) {
-                    return getBaseFontSize(boundTextElement, elementsMap);
-                  }
-                  return null;
                 },
                 (element) =>
-                  isTextElement(element) ||
-                  getBoundTextElement(
+                  hasEditableTextStyle(
                     element,
                     app.scene.getNonDeletedElementsMap(),
-                  ) !== null,
+                  ),
                 (hasSelection) =>
                   hasSelection
                     ? null
@@ -1299,7 +1339,12 @@ export const actionChangeFontFamily = register<{
 
               const container = app.scene.getContainerElement(oldElement);
 
-              if (resetContainers && container && cachedContainer) {
+              if (
+                resetContainers &&
+                container &&
+                cachedContainer &&
+                !isTableElement(container)
+              ) {
                 // reset the container back to it's cached version
                 app.scene.mutateElement(container, { ...cachedContainer });
               }
@@ -1311,7 +1356,9 @@ export const actionChangeFontFamily = register<{
                 ]);
               }
 
-              elementContainerMapping.set(newElement, container);
+              if (!(container && isTableElement(container))) {
+                elementContainerMapping.set(newElement, container);
+              }
 
               return newElement;
             }
@@ -1385,19 +1432,9 @@ export const actionChangeFontFamily = register<{
         getFormValue(
           elementsArray,
           app,
-          (element) => {
-            if (isTextElement(element)) {
-              return element.fontFamily;
-            }
-            const boundTextElement = getBoundTextElement(element, elementsMap);
-            if (boundTextElement) {
-              return boundTextElement.fontFamily;
-            }
-            return null;
-          },
           (element) =>
-            isTextElement(element) ||
-            getBoundTextElement(element, elementsMap) !== null,
+            readTextStyle(element, elementsMap, (text) => text.fontFamily),
+          (element) => hasEditableTextStyle(element, elementsMap),
           (hasSelection) =>
             hasSelection
               ? null
@@ -1570,11 +1607,10 @@ export const actionChangeTextAlign = register<TextAlign>({
               oldElement,
               { textAlign: value },
             );
-            redrawTextBoundingBox(
+            redrawBoundLabel(
               newElement,
               app.scene.getContainerElement(oldElement),
-              app.scene,
-              app.renderEnvironment,
+              app,
             );
             return newElement;
           }
@@ -1623,22 +1659,9 @@ export const actionChangeTextAlign = register<TextAlign>({
             value={getFormValue(
               elements,
               app,
-              (element) => {
-                if (isTextElement(element)) {
-                  return element.textAlign;
-                }
-                const boundTextElement = getBoundTextElement(
-                  element,
-                  elementsMap,
-                );
-                if (boundTextElement) {
-                  return boundTextElement.textAlign;
-                }
-                return null;
-              },
               (element) =>
-                isTextElement(element) ||
-                getBoundTextElement(element, elementsMap) !== null,
+                readTextStyle(element, elementsMap, (text) => text.textAlign),
+              (element) => hasEditableTextStyle(element, elementsMap),
               (hasSelection) =>
                 hasSelection ? null : appState.currentItemTextAlign,
             )}
@@ -1673,11 +1696,10 @@ export const actionChangeVerticalAlign = register<VerticalAlign>({
               { verticalAlign: value },
             );
 
-            redrawTextBoundingBox(
+            redrawBoundLabel(
               newElement,
               app.scene.getContainerElement(oldElement),
-              app.scene,
-              app.renderEnvironment,
+              app,
             );
             return newElement;
           }
@@ -1723,24 +1745,21 @@ export const actionChangeVerticalAlign = register<VerticalAlign>({
               elements,
               app,
               (element) => {
-                if (isTextElement(element) && element.containerId) {
-                  return element.verticalAlign;
+                const elementsMap = app.scene.getNonDeletedElementsMap();
+                if (isTextElement(element)) {
+                  return element.containerId ? element.verticalAlign : null;
                 }
-                const boundTextElement = getBoundTextElement(
+                return readTextStyle(
                   element,
-                  app.scene.getNonDeletedElementsMap(),
+                  elementsMap,
+                  (text) => text.verticalAlign,
                 );
-                if (boundTextElement) {
-                  return boundTextElement.verticalAlign;
-                }
-                return null;
               },
               (element) =>
-                isTextElement(element) ||
-                getBoundTextElement(
+                hasEditableTextStyle(
                   element,
                   app.scene.getNonDeletedElementsMap(),
-                ) !== null,
+                ),
               (hasSelection) => (hasSelection ? null : VERTICAL_ALIGN.MIDDLE),
             )}
             onChange={(value) => {
