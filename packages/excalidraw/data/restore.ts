@@ -996,6 +996,89 @@ const bindingsEqual = (
   );
 };
 
+const markDeleted = (element: ExcalidrawElement) => {
+  if (element.isDeleted) {
+    return;
+  }
+  const mutable = element as Mutable<ExcalidrawElement>;
+  mutable.isDeleted = true;
+  bumpVersion(mutable);
+};
+
+/**
+ * Drops cells that don't belong to a live slot. A partial remote payload
+ * often omits the table, so the table is taken from `existingElementsMap`
+ * when the payload doesn't include it. A self-contained restore (no existing
+ * scene) drops a cell whose table is missing entirely.
+ */
+const dropTableOrphans = (
+  elements: readonly ExcalidrawElement[],
+  elementsMap: ElementsMap,
+  existingElementsMap: ElementsMap | null,
+) => {
+  const resolve = (id: string | null | undefined) => {
+    if (!id) {
+      return null;
+    }
+    return elementsMap.get(id) ?? existingElementsMap?.get(id) ?? null;
+  };
+  const keptByTable = new Map<string, ExcalidrawTextElement[]>();
+
+  for (const element of elements) {
+    if (!isTextElement(element) || element.isDeleted || !element.containerId) {
+      continue;
+    }
+    const container = resolve(element.containerId);
+    if (!container || !isTableElement(container)) {
+      // No scene to borrow a table from: the cell can never be placed.
+      if (!container && !existingElementsMap && isTableCell(element)) {
+        markDeleted(element);
+      }
+      continue;
+    }
+    const slotOk =
+      !container.isDeleted &&
+      isTableCell(element) &&
+      container.rows.some((row) => row.id === element.tableCell.rowId) &&
+      container.columns.some(
+        (column) => column.id === element.tableCell.columnId,
+      );
+    if (!slotOk) {
+      markDeleted(element);
+      continue;
+    }
+    const kept = keptByTable.get(container.id) ?? [];
+    if (
+      kept.some(
+        (cell) =>
+          cell.tableCell?.rowId === element.tableCell.rowId &&
+          cell.tableCell?.columnId === element.tableCell.columnId,
+      )
+    ) {
+      markDeleted(element);
+      continue;
+    }
+    kept.push(element);
+    keptByTable.set(container.id, kept);
+  }
+
+  for (const element of elements) {
+    if (!isTableElement(element) || !element.boundElements) {
+      continue;
+    }
+    const nextBindings = element.boundElements.filter((binding) => {
+      if (binding.type !== "text") {
+        return true;
+      }
+      const bound = elementsMap.get(binding.id);
+      return !bound?.isDeleted;
+    });
+    if (!bindingsEqual(element.boundElements, nextBindings)) {
+      Object.assign(element, { boundElements: nextBindings });
+    }
+  }
+};
+
 /**
  * After bindings are repaired: drop cells that don't belong to a live slot,
  * keep one cell per slot, and (when asked) recompute geometry. Empty cells
@@ -1006,15 +1089,6 @@ const restoreTables = (
   elementsMap: ElementsMap,
   opts: { refreshDimensions: boolean },
 ) => {
-  const markDeleted = (element: ExcalidrawElement) => {
-    if (element.isDeleted) {
-      return;
-    }
-    const mutable = element as Mutable<ExcalidrawElement>;
-    mutable.isDeleted = true;
-    bumpVersion(mutable);
-  };
-
   const keptByTable = new Map<string, ExcalidrawTextElement[]>();
   for (const element of elements) {
     if (!isTextElement(element) || element.isDeleted) {
@@ -1153,15 +1227,23 @@ export const restoreElements = <T extends ExcalidrawElement>(
     }, [] as ExcalidrawElement[]),
   );
 
+  // repair binding. Mutates elements.
+  const restoredElementsMap = arrayToMap(restoredElements);
+
+  // Collab restores remote elements without repairing bindings. Orphan cells
+  // still have to be dropped here, before reconcile, or a deleted column's
+  // text can win on version and stay visible.
   if (!opts?.repairBindings) {
+    dropTableOrphans(
+      restoredElements,
+      restoredElementsMap,
+      existingElementsMap,
+    );
     return restoredElements as CombineBrandsIfNeeded<
       T,
       OrderedExcalidrawElement
     >;
   }
-
-  // repair binding. Mutates elements.
-  const restoredElementsMap = arrayToMap(restoredElements);
   for (const element of restoredElements) {
     if (element.frameId) {
       repairFrameMembership(element, restoredElementsMap);

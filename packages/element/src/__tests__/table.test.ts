@@ -30,7 +30,11 @@ import {
   insertTableRow,
   relayoutTables,
 } from "../table";
-import { getBoundTextElement, getBoundTextElements } from "../textElement";
+import {
+  getBoundTextElement,
+  getBoundTextElements,
+  getBoundTextMaxHeight,
+} from "../textElement";
 import { wrapText } from "../textWrapping";
 import { isTableCell, isTableElement } from "../typeChecks";
 
@@ -201,9 +205,52 @@ describe("table layout", () => {
       height: layout.cellUpdates.get(edited.id)!.height,
     });
     expect(nextTable.height).toBeGreaterThan(table.height);
+    if (!isTableElement(nextTable) || !isTableCell(nextCell)) {
+      throw new Error("expected the grown cell");
+    }
+    // Base-row max height would clip this; relayout must keep the grown text.
+    expect(nextCell.height).toBeGreaterThan(
+      getBoundTextMaxHeight(nextTable, nextCell),
+    );
 
     const again = relayoutTables(laidOut, new Set([nextTable.id]));
     expect(again).toBe(laidOut);
+  });
+
+  it("marks orphan cells deleted and is idempotent afterwards", () => {
+    const { table, cells } = newTableElement({ type: "table", x: 0, y: 0 });
+    const orphan = newTextElement({
+      x: 0,
+      y: 0,
+      text: "gone",
+      originalText: "gone",
+      containerId: table.id,
+      tableCell: { rowId: "missing-row", columnId: table.columns[0].id },
+    });
+    const duplicate = newElementWith(cells[0], {});
+    const elements = [
+      table,
+      ...cells,
+      orphan,
+      { ...duplicate, id: "dup-cell" },
+    ];
+    const ids = new Set(elements.map((element) => element.id));
+
+    const laidOut = relayoutTables(elements, ids);
+    expect(laidOut.find((element) => element.id === orphan.id)?.isDeleted).toBe(
+      true,
+    );
+    expect(
+      laidOut.find((element) => element.id === "dup-cell")?.isDeleted,
+    ).toBe(true);
+    expect(laidOut.find((element) => element.id === table.id)).toBe(table);
+    expect(laidOut.find((element) => element.id === cells[0].id)).toBe(
+      cells[0],
+    );
+
+    expect(
+      relayoutTables(laidOut, new Set(laidOut.map((element) => element.id))),
+    ).toBe(laidOut);
   });
 
   it("wraps text to the column and does not grow a row for a blank cell", () => {

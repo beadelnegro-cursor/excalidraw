@@ -208,6 +208,7 @@ import {
   isEligibleFrameChildType,
   getBindingStrategyForDraggingBindingElementEndpoints,
   isNonDeletedElement,
+  relayoutTables,
 } from "@excalidraw/element";
 
 import type { GlobalPoint, LocalPoint } from "@excalidraw/math";
@@ -4990,7 +4991,19 @@ class App extends React.Component<AppProps, AppState> {
        */
       captureUpdate?: SceneData["captureUpdate"];
     }) => {
-      const { elements, appState, collaborators, captureUpdate } = sceneData;
+      const { appState, collaborators, captureUpdate } = sceneData;
+      // Remote updates use CaptureUpdateAction.NEVER. Reconcile is
+      // whole-element, so two people growing different rows leave one table
+      // size behind. Relayout is idempotent: an already-correct scene keeps
+      // the same element objects and does not broadcast again.
+      const elements =
+        sceneData.elements && captureUpdate === CaptureUpdateAction.NEVER
+          ? relayoutTables(
+              sceneData.elements,
+              new Set(sceneData.elements.map((element) => element.id)),
+              { renderEnvironment: this.renderEnvironment },
+            )
+          : sceneData.elements;
 
       if (captureUpdate) {
         const nextElements = elements ? elements : undefined;
