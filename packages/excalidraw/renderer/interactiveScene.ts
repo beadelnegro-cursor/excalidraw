@@ -37,6 +37,7 @@ import {
   isBindableElement,
   isElbowArrow,
   isFrameLikeElement,
+  isTableElement,
   isImageElement,
   isLinearElement,
   isLineElement,
@@ -1778,8 +1779,8 @@ const _renderInteractiveScene = ({
     );
   }
 
-  const isFrameSelected = selectedElements.some((element) =>
-    isFrameLikeElement(element),
+  const omitRotationHandle = selectedElements.some(
+    (element) => isFrameLikeElement(element) || isTableElement(element),
   );
 
   // Getting the element using LinearElementEditor during collab mismatches version - being one head of visible elements due to
@@ -2048,7 +2049,7 @@ const _renderInteractiveScene = ({
         0 as Radians,
         appState.zoom,
         "mouse",
-        isFrameSelected
+        omitRotationHandle
           ? {
               ...getOmitSidesForEditorInterface(editorInterface),
               rotation: true,

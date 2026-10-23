@@ -21,7 +21,10 @@ import type { Radians } from "@excalidraw/math";
 
 import { newElementWith } from "./mutateElement";
 import { newTextElement } from "./newElement";
-import { getPositionAfterHeightChange } from "./sizeHelpers";
+import {
+  getPositionAfterHeightChange,
+  type VerticalResizeAnchor,
+} from "./sizeHelpers";
 import { measureText } from "./textMeasurements";
 import { wrapText } from "./textWrapping";
 import { isTableCell, isTableElement } from "./typeChecks";
@@ -301,7 +304,15 @@ const alignOffset = (
 export const getTableLayout = (
   table: ExcalidrawTableElement,
   elements: readonly ExcalidrawElement[] | ElementsMap,
-  opts?: { renderEnvironment?: RenderEnvironment },
+  opts?: {
+    renderEnvironment?: RenderEnvironment;
+    /**
+     * Which edge stays put when content makes the table taller than
+     * `table.height`. Resize passes the edge the gesture holds still.
+     * Defaults to the top, which is what typing and restore want.
+     */
+    anchor?: VerticalResizeAnchor;
+  },
 ): TableLayout => {
   const rows = sanitizeTableRows(table.rows);
   const columns = sanitizeTableColumns(table.columns);
@@ -352,7 +363,11 @@ export const getTableLayout = (
   );
   const width = columnWidths.reduce((sum, size) => sum + size, 0);
   const height = rowHeights.reduce((sum, size) => sum + size, 0);
-  const position = getPositionAfterHeightChange(table, height, "top");
+  const position = getPositionAfterHeightChange(
+    table,
+    height,
+    opts?.anchor ?? "top",
+  );
   const columnLefts: number[] = [];
   const rowTops: number[] = [];
   let cursorX = 0;

@@ -6,7 +6,7 @@ import {
   isBindingElement,
   unbindBindingElement,
 } from "@excalidraw/element";
-import { isFrameLikeElement } from "@excalidraw/element";
+import { isFrameLikeElement, isTableElement } from "@excalidraw/element";
 
 import {
   getSelectedGroupIds,
@@ -47,7 +47,10 @@ export const isPropertyEditable = (
   element: ExcalidrawElement,
   property: keyof ExcalidrawElement,
 ) => {
-  if (property === "angle" && isFrameLikeElement(element)) {
+  if (
+    property === "angle" &&
+    (isFrameLikeElement(element) || isTableElement(element))
+  ) {
     return false;
   }
   return true;
