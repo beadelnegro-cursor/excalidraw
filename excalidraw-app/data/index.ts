@@ -8,7 +8,7 @@ import {
   IV_LENGTH_BYTES,
 } from "@excalidraw/excalidraw/data/encryption";
 import { serializeAsJSON } from "@excalidraw/excalidraw/data/json";
-import { isInvisiblySmallElement } from "@excalidraw/element";
+import { isInvisiblySmallElement, isTableCell } from "@excalidraw/element";
 import { isInitializedImageElement } from "@excalidraw/element";
 import { t } from "@excalidraw/excalidraw/i18n";
 import { bytesToHexString } from "@excalidraw/common";
@@ -51,6 +51,11 @@ export const isSyncableElement = (
       return true;
     }
     return false;
+  }
+  // Empty cells have no text and may report a zero box. They are real
+  // elements; dropping them here means the other client never receives the slot.
+  if (isTableCell(element)) {
+    return true;
   }
   return !isInvisiblySmallElement(element);
 };

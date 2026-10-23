@@ -27,7 +27,7 @@ import {
 } from "./sizeHelpers";
 import { measureText } from "./textMeasurements";
 import { wrapText } from "./textWrapping";
-import { isTableCell, isTableElement } from "./typeChecks";
+import { isTableCell, isTableElement, isTextElement } from "./typeChecks";
 
 import type { RenderEnvironment } from "./renderEnvironment";
 import type {
@@ -601,10 +601,77 @@ const layoutInputsChanged = (
   });
 };
 
+const textBindingsFor = (
+  rows: readonly TableRow[],
+  columns: readonly TableColumn[],
+  cells: readonly ExcalidrawTextElement[],
+) => {
+  const bySlot = new Map<string, ExcalidrawTextElement>();
+  for (const cell of cells) {
+    if (isTableCell(cell) && !cell.isDeleted) {
+      bySlot.set(slotKey(cell.tableCell), cell);
+    }
+  }
+  const bindings: { type: "text"; id: string }[] = [];
+  for (const row of rows) {
+    for (const column of columns) {
+      const cell = bySlot.get(slotKey({ rowId: row.id, columnId: column.id }));
+      if (cell) {
+        bindings.push({ type: "text", id: cell.id });
+      }
+    }
+  }
+  return bindings;
+};
+
+const bindingsMatch = (
+  left: ExcalidrawElement["boundElements"],
+  right: readonly { id: string; type: string }[],
+) => {
+  if (!left) {
+    return right.length === 0;
+  }
+  return (
+    left.length === right.length &&
+    left.every(
+      (binding, index) =>
+        binding.id === right[index]?.id && binding.type === right[index]?.type,
+    )
+  );
+};
+
+/**
+ * Live cells that occupy a slot, plus every other live text bound to the
+ * table (duplicate slot, missing slot, or no `tableCell`).
+ */
+const partitionTableTexts = (
+  table: ExcalidrawTableElement,
+  elements: readonly ExcalidrawElement[] | ElementsMap,
+) => {
+  const kept = getTableCellElements(table, elements);
+  const keptIds = new Set(kept.map((cell) => cell.id));
+  const orphans: ExcalidrawTextElement[] = [];
+  for (const element of asElements(elements)) {
+    if (
+      isTextElement(element) &&
+      !element.isDeleted &&
+      element.containerId === table.id &&
+      !keptIds.has(element.id)
+    ) {
+      orphans.push(element);
+    }
+  }
+  return { kept, orphans };
+};
+
 /**
  * Applies `getTableLayout` to the tables in `affectedIds` (and tables whose
  * cells are). Elements that do not change keep their identity. With
  * `prevElementsMap`, tables whose inputs did not change are not measured.
+ *
+ * Row growth is measured here, not via `getBoundTextMaxHeight`. That helper
+ * reports the base row, so using it would clip a row that has already grown.
+ * Cells that no longer belong to a live slot are marked deleted.
  */
 export const relayoutTables = <T extends ExcalidrawElement>(
   elements: readonly T[],
@@ -619,6 +686,14 @@ export const relayoutTables = <T extends ExcalidrawElement>(
   }
   const elementsMap = arrayToMap(elements);
   const tableIds = new Set<ExcalidrawElement["id"]>();
+  const replacements = new Map<ExcalidrawElement["id"], T>();
+  const deleteElement = (element: ExcalidrawElement) => {
+    const next = newElementWith(element, { isDeleted: true });
+    if (next !== element) {
+      replacements.set(element.id, next as unknown as T);
+    }
+  };
+
   for (const id of affectedIds) {
     const element = elementsMap.get(id);
     if (!element || element.isDeleted) {
@@ -626,35 +701,67 @@ export const relayoutTables = <T extends ExcalidrawElement>(
     }
     if (isTableElement(element)) {
       tableIds.add(element.id);
-    } else if (isTableCell(element)) {
-      const container = elementsMap.get(element.containerId);
-      if (container && !container.isDeleted && isTableElement(container)) {
+      continue;
+    }
+    if (!isTextElement(element) || !element.containerId) {
+      continue;
+    }
+    const container = elementsMap.get(element.containerId);
+    if (container && isTableElement(container)) {
+      if (container.isDeleted) {
+        deleteElement(element);
+      } else {
         tableIds.add(container.id);
       }
+      continue;
+    }
+    // A cell has to point at a table. A non-cell whose container is absent
+    // stays, so a partial update can omit unchanged elements.
+    if (isTableCell(element)) {
+      deleteElement(element);
     }
   }
-  if (!tableIds.size) {
+  if (!tableIds.size && !replacements.size) {
     return elements;
   }
 
-  const replacements = new Map<ExcalidrawElement["id"], T>();
   for (const id of tableIds) {
-    const table = elementsMap.get(id) as ExcalidrawTableElement;
-    const cells = getTableCellElements(table, elementsMap);
+    const table = elementsMap.get(id);
+    if (!table || !isTableElement(table) || table.isDeleted) {
+      continue;
+    }
+    const { kept, orphans } = partitionTableTexts(table, elementsMap);
+    const nextBindings = [
+      ...textBindingsFor(table.rows, table.columns, kept),
+      ...(table.boundElements ?? []).filter(
+        (binding) => binding.type !== "text",
+      ),
+    ];
+    const bindingsChanged = !bindingsMatch(table.boundElements, nextBindings);
     if (
+      !orphans.length &&
+      !bindingsChanged &&
       opts?.prevElementsMap &&
-      !layoutInputsChanged(table, cells, opts.prevElementsMap)
+      !layoutInputsChanged(table, kept, opts.prevElementsMap)
     ) {
       continue;
     }
     const layout = getTableLayout(table, elementsMap, {
       renderEnvironment: opts?.renderEnvironment,
     });
-    const nextTable = newElementWith(table, layout.table);
+    const nextTable = newElementWith(table as ExcalidrawTableElement, {
+      x: layout.table.x,
+      y: layout.table.y,
+      width: layout.table.width,
+      height: layout.table.height,
+      ...(layout.table.rows ? { rows: layout.table.rows } : {}),
+      ...(layout.table.columns ? { columns: layout.table.columns } : {}),
+      ...(bindingsChanged ? { boundElements: nextBindings } : {}),
+    });
     if (nextTable !== table) {
       replacements.set(id, nextTable as unknown as T);
     }
-    for (const cell of cells) {
+    for (const cell of kept) {
       const update = layout.cellUpdates.get(cell.id);
       if (!update) {
         continue;
@@ -663,6 +770,9 @@ export const relayoutTables = <T extends ExcalidrawElement>(
       if (nextCell !== cell) {
         replacements.set(cell.id, nextCell as unknown as T);
       }
+    }
+    for (const orphan of orphans) {
+      deleteElement(orphan);
     }
   }
   if (!replacements.size) {
@@ -723,29 +833,6 @@ const liveCells = (
   cells.filter(
     (cell): cell is TableCellElement => !cell.isDeleted && isTableCell(cell),
   );
-
-const textBindingsFor = (
-  rows: readonly TableRow[],
-  columns: readonly TableColumn[],
-  cells: readonly ExcalidrawTextElement[],
-) => {
-  const bySlot = new Map<string, ExcalidrawTextElement>();
-  for (const cell of cells) {
-    if (isTableCell(cell) && !cell.isDeleted) {
-      bySlot.set(slotKey(cell.tableCell), cell);
-    }
-  }
-  const bindings: { type: "text"; id: string }[] = [];
-  for (const row of rows) {
-    for (const column of columns) {
-      const cell = bySlot.get(slotKey({ rowId: row.id, columnId: column.id }));
-      if (cell) {
-        bindings.push({ type: "text", id: cell.id });
-      }
-    }
-  }
-  return bindings;
-};
 
 const commitStructure = (
   table: ExcalidrawTableElement,
