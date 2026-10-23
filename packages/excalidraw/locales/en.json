@@ -370,6 +370,7 @@
     "frame": "Frame",
     "magicframe": "Wireframe to code",
     "stickynote": "Sticky note",
+    "table": "Table",
     "embeddable": "Web Embed",
     "selection": "Selection",
     "iframe": "IFrame"

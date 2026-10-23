@@ -269,6 +269,7 @@ const renderElementToSvg = (
       break;
     }
     case "rectangle":
+    case "table":
     case "diamond":
     case "ellipse": {
       const shape = ShapeCache.generateElementShape(element, renderConfig);

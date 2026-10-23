@@ -499,6 +499,7 @@ const drawElementOnCanvas = (
       break;
     }
     case "rectangle":
+    case "table":
     case "iframe":
     case "embeddable":
     case "diamond":
@@ -1155,6 +1156,7 @@ const drawElement = (
       break;
     }
     case "rectangle":
+    case "table":
     case "stickynote":
     case "diamond":
     case "ellipse":

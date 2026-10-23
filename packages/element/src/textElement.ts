@@ -31,6 +31,7 @@ import {
   isBoundToContainer,
   isArrowElement,
   isStickyNoteElement,
+  isTableElement,
   isTextElement,
 } from "./typeChecks";
 
@@ -339,16 +340,45 @@ export const computeBoundTextPosition = (
 };
 
 export const getBoundTextElementId = (container: ExcalidrawElement | null) => {
-  return container?.boundElements?.length
-    ? container?.boundElements?.find((ele) => ele.type === "text")?.id || null
+  // A table's bound texts are cells, not one label.
+  if (!container || isTableElement(container)) {
+    return null;
+  }
+  return container.boundElements?.length
+    ? container.boundElements.find((ele) => ele.type === "text")?.id || null
     : null;
+};
+
+/**
+ * Every non-deleted text element bound to `container`, in boundElements order.
+ * Tables have one entry per cell; single-label containers have at most one.
+ */
+export const getBoundTextElements = (
+  container: ExcalidrawElement | null,
+  elementsMap: ElementsMap,
+): NonDeleted<ExcalidrawTextElementWithContainer>[] => {
+  if (!container?.boundElements?.length) {
+    return [];
+  }
+  const bound: NonDeleted<ExcalidrawTextElementWithContainer>[] = [];
+  for (const binding of container.boundElements) {
+    if (binding.type !== "text") {
+      continue;
+    }
+    const element = elementsMap.get(binding.id);
+    if (!element || !isTextElement(element) || element.isDeleted) {
+      continue;
+    }
+    bound.push(element as NonDeleted<ExcalidrawTextElementWithContainer>);
+  }
+  return bound;
 };
 
 export const getBoundTextElement = (
   element: ExcalidrawElement | null,
   elementsMap: ElementsMap,
 ): NonDeleted<ExcalidrawTextElementWithContainer> | null => {
-  if (!element) {
+  if (!element || isTableElement(element)) {
     return null;
   }
   const boundTextElementId = getBoundTextElementId(element);
