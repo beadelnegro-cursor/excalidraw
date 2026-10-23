@@ -12,7 +12,7 @@ import {
   type Bounds,
   type StylesPanelMode,
 } from "@excalidraw/common";
-import { pointFrom, type Radians } from "@excalidraw/math";
+import { pointFrom, type GlobalPoint, type Radians } from "@excalidraw/math";
 
 import {
   DEFAULT_BOUND_TEXT_LABEL_POSITION,
@@ -26,13 +26,19 @@ import {
   getElementAbsoluteCoords,
   getElementBounds,
   getLineHeightInPx,
+  createTableCellElement,
   getStickyNoteLayout,
+  getTableCellAt,
+  getTableCellElements,
+  getTableLayout,
   hitElementItself,
   isArrowElement,
   isFrameLikeElement,
   isNonDeletedElement,
   isOpaqueForBinding,
   isStickyNoteElement,
+  isTableCell,
+  isTableElement,
   isTextBindableContainer,
   isTextElement,
   isValidTextContainer,
@@ -46,6 +52,7 @@ import {
 import type { ArrowEndpoint } from "@excalidraw/element";
 import type {
   ExcalidrawElement,
+  ExcalidrawTableElement,
   ExcalidrawTextContainer,
   ExcalidrawTextElement,
   NonDeleted,
@@ -192,15 +199,39 @@ export class AppText {
         return;
       }
 
-      const container = getContainerElement(latestTextElement, elementsMap);
+      const container = latestTextElement.containerId
+        ? elementsMap.get(latestTextElement.containerId) ?? null
+        : null;
       const stickyContainer =
         container && isStickyNoteElement(container) ? container : null;
+      const tableContainer =
+        container && isTableElement(container) ? container : null;
+      // empty cells stay; deleting them would drop the slot
+      if (isTableCell(latestTextElement)) {
+        isDeleted = false;
+      }
       // sticky notes: the fit owns both the label and the note geometry
       const stickyLayout = stickyContainer
         ? getStickyNoteLayout(stickyContainer, latestTextElement, {
             originalText: nextOriginalText,
             renderEnvironment: this.app.renderEnvironment,
           })
+        : null;
+      const sceneElements = this.app.scene.getElementsIncludingDeleted();
+      const tableLayout = tableContainer
+        ? getTableLayout(
+            tableContainer,
+            sceneElements.map((sceneElement) =>
+              sceneElement.id === latestTextElement.id
+                ? {
+                    ...latestTextElement,
+                    originalText: nextOriginalText,
+                    isDeleted: false,
+                  }
+                : sceneElement,
+            ),
+            { renderEnvironment: this.app.renderEnvironment },
+          )
         : null;
       // a free text stops growing at the view's width (between the side
       // panels beside its rows), or TEXT_MAX_WRAP_WIDTH, and wraps from there
@@ -209,9 +240,9 @@ export class AppText {
       );
       const maxWidth = this.getMaxTextWidth(textViewportOffsets);
 
-      this.app.scene.replaceAllElements([
+      this.app.scene.replaceAllElements(
         // Not sure why we include deleted elements as well hence using deleted elements map
-        ...this.app.scene.getElementsIncludingDeleted().map((_element) => {
+        sceneElements.map((_element) => {
           if (
             stickyLayout &&
             _element.id === stickyContainer?.id &&
@@ -219,7 +250,29 @@ export class AppText {
           ) {
             return newElementWith(_element, stickyLayout.container);
           }
-          if (_element.id === latestTextElement.id && isTextElement(_element)) {
+          if (
+            tableLayout &&
+            _element.id === tableContainer?.id &&
+            isTableElement(_element)
+          ) {
+            return newElementWith(_element, tableLayout.table);
+          }
+          if (tableLayout && isTextElement(_element)) {
+            const cellUpdate = tableLayout.cellUpdates.get(_element.id);
+            if (cellUpdate) {
+              return newElementWith(_element, {
+                ...cellUpdate,
+                ...(_element.id === latestTextElement.id
+                  ? { originalText: nextOriginalText, isDeleted: false }
+                  : {}),
+              });
+            }
+          }
+          if (
+            !tableLayout &&
+            _element.id === latestTextElement.id &&
+            isTextElement(_element)
+          ) {
             return newElementWith(_element, {
               originalText: nextOriginalText,
               isDeleted: isDeleted ?? _element.isDeleted,
@@ -237,7 +290,7 @@ export class AppText {
           }
           return _element;
         }),
-      ]);
+      );
 
       const updatedTextElement = this.app.scene.getNonDeletedElement(
         latestTextElement.id,
@@ -300,7 +353,8 @@ export class AppText {
       onSubmit: withBatchedUpdates(({ viaKeyboard, nextOriginalText }) => {
         this.textWysiwygSubmitHandler = null;
 
-        const isDeleted = !nextOriginalText.trim();
+        const latest = this.app.scene.getElement(element.id);
+        const isDeleted = !isTableCell(latest) && !nextOriginalText.trim();
         updateElement(nextOriginalText, isDeleted);
 
         // keyboard-submit keeps focus on the edited object. For bound text, keep
@@ -908,5 +962,159 @@ export class AppText {
         return { viewportX, viewportY, elementCenterX, elementCenterY };
       }
     }
+  }
+
+  /**
+   * Edit one cell of a table. A missing cell (damaged data) is created.
+   * Returns false when there is no editable cell.
+   */
+  public startEditingTableCell = ({
+    table,
+    tableId,
+    slot,
+    initialCaretSceneCoords,
+  }: {
+    table?: ExcalidrawTableElement | null;
+    tableId?: string;
+    slot?: { rowId: string; columnId: string };
+    initialCaretSceneCoords?: { x: number; y: number };
+  }) => {
+    const resolved =
+      table ?? (tableId ? this.app.scene.getElement(tableId) : null);
+    if (
+      !resolved ||
+      !isTableElement(resolved) ||
+      resolved.isDeleted ||
+      resolved.locked
+    ) {
+      return false;
+    }
+    const address = slot ?? {
+      rowId: resolved.rows[0]?.id,
+      columnId: resolved.columns[0]?.id,
+    };
+    if (
+      !address.rowId ||
+      !address.columnId ||
+      !resolved.rows.some((row) => row.id === address.rowId) ||
+      !resolved.columns.some((column) => column.id === address.columnId)
+    ) {
+      return false;
+    }
+
+    let cell: NonDeleted<ExcalidrawTextElement> | undefined =
+      getTableCellElements(
+        resolved,
+        this.app.scene.getNonDeletedElements(),
+      ).find(
+        (candidate) =>
+          candidate.tableCell.rowId === address.rowId &&
+          candidate.tableCell.columnId === address.columnId,
+      );
+    const existed = !!cell;
+    if (!cell) {
+      cell = createTableCellElement(
+        resolved,
+        { rowId: address.rowId, columnId: address.columnId },
+        getTableCellElements(
+          resolved,
+          this.app.scene.getNonDeletedElements(),
+        )[0],
+      );
+      const containerIndex = this.app.scene.getElementIndex(resolved.id);
+      this.app.scene.insertElementsAtIndex([cell], containerIndex + 1);
+      const cells = getTableCellElements(
+        resolved,
+        this.app.scene.getNonDeletedElements(),
+      );
+      this.app.scene.mutateElement(resolved, {
+        boundElements: [
+          ...cells.map((entry) => ({ type: "text" as const, id: entry.id })),
+          ...(resolved.boundElements ?? []).filter(
+            (binding) => binding.type !== "text",
+          ),
+        ],
+      });
+    }
+
+    this.app.setState({ editingTextElement: cell });
+    this.handleTextWysiwyg(cell, {
+      isExistingElement: existed,
+      initialCaretSceneCoords: existed ? initialCaretSceneCoords : null,
+    });
+    return true;
+  };
+
+  /**
+   * Double-click routing. A table's interior is not a filled hit target, so
+   * a miss still counts when the point is inside the grid. A locked table
+   * consumes the click. Returns false when the point is not a table cell.
+   */
+  public editTableCellAt({
+    sceneX,
+    sceneY,
+    selectedElements,
+  }: {
+    sceneX: number;
+    sceneY: number;
+    selectedElements: readonly ExcalidrawElement[];
+  }) {
+    const elements = this.app.scene.getNonDeletedElements();
+    const elementsMap = this.app.scene.getNonDeletedElementsMap();
+    const point = pointFrom<GlobalPoint>(sceneX, sceneY);
+    const hit = this.app.getElementAtPosition(sceneX, sceneY, {
+      includeBoundTextElement: true,
+    });
+
+    let table: ExcalidrawTableElement | null = null;
+    let slot: { rowId: string; columnId: string } | null = null;
+
+    if (isTableCell(hit)) {
+      const container = elementsMap.get(hit.containerId);
+      if (container && isTableElement(container) && !container.isDeleted) {
+        table = container;
+        slot = hit.tableCell;
+      }
+    } else if (hit && isTableElement(hit)) {
+      table = hit;
+      slot = getTableCellAt(hit, point, elementsMap);
+    } else if (!hit) {
+      const selected =
+        selectedElements.length === 1 && isTableElement(selectedElements[0])
+          ? selectedElements[0]
+          : null;
+      if (selected) {
+        slot = getTableCellAt(selected, point, elementsMap);
+        if (slot) {
+          table = selected;
+        }
+      }
+      if (!table) {
+        for (let index = elements.length - 1; index >= 0; index--) {
+          const element = elements[index];
+          if (!isTableElement(element)) {
+            continue;
+          }
+          const found = getTableCellAt(element, point, elementsMap);
+          if (found) {
+            table = element;
+            slot = found;
+            break;
+          }
+        }
+      }
+    }
+
+    if (!table || !slot) {
+      return false;
+    }
+    if (table.locked) {
+      return true;
+    }
+    return this.startEditingTableCell({
+      table,
+      slot,
+      initialCaretSceneCoords: { x: sceneX, y: sceneY },
+    });
   }
 }
