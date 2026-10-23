@@ -73,7 +73,7 @@ import {
 import { getContainingFrame } from "./frame";
 import { getCornerRadius } from "./utils";
 
-import { ShapeCache } from "./shape";
+import { ShapeCache, tableShapeCacheKey } from "./shape";
 import {
   getStickyNoteFooter,
   getStickyNotePathCommands,
@@ -218,6 +218,8 @@ export interface ExcalidrawElementWithCanvas {
   canvasOffsetY: number;
   imageCrop: ExcalidrawImageElement["crop"] | null;
   containingFrameOpacity: number;
+  /** Set for tables so a cell edit regenerates the grid bitmap. */
+  tableShapeKey?: number;
 }
 
 const cappedElementCanvasSize = (
@@ -324,7 +326,7 @@ const generateElementCanvas = (
 
   const rc = rough.canvas(canvas);
 
-  drawElementOnCanvas(element, rc, context, renderConfig);
+  drawElementOnCanvas(element, rc, context, renderConfig, elementsMap);
 
   context.restore();
 
@@ -341,6 +343,10 @@ const generateElementCanvas = (
     containingFrameOpacity:
       getContainingFrame(element, elementsMap)?.opacity || 100,
     imageCrop: isImageElement(element) ? element.crop : null,
+    tableShapeKey:
+      element.type === "table"
+        ? tableShapeCacheKey(element, elementsMap)
+        : undefined,
   };
 };
 
@@ -462,6 +468,7 @@ const drawElementOnCanvas = (
   rc: RoughCanvas,
   context: CanvasRenderingContext2D,
   renderConfig: StaticCanvasRenderConfig,
+  elementsMap: ElementsMap,
 ) => {
   switch (element.type) {
     case "stickynote": {
@@ -498,8 +505,19 @@ const drawElementOnCanvas = (
       });
       break;
     }
+    case "table": {
+      context.lineJoin = "round";
+      context.lineCap = "round";
+      for (const shape of ShapeCache.generateElementShape(
+        element,
+        renderConfig,
+        elementsMap,
+      )) {
+        rc.draw(shape);
+      }
+      break;
+    }
     case "rectangle":
-    case "table":
     case "iframe":
     case "embeddable":
     case "diamond":
@@ -746,6 +764,10 @@ const generateElementWithCanvas = (
 
   const containingFrameOpacity =
     getContainingFrame(element, elementsMap)?.opacity || 100;
+  const tableShapeKey =
+    element.type === "table"
+      ? tableShapeCacheKey(element, elementsMap)
+      : undefined;
 
   if (
     !prevElementWithCanvas ||
@@ -754,7 +776,8 @@ const generateElementWithCanvas = (
     prevElementWithCanvas.deviceScale !== renderConfig.scale ||
     prevElementWithCanvas.environment !== renderEnvironment ||
     prevElementWithCanvas.imageCrop !== imageCrop ||
-    prevElementWithCanvas.containingFrameOpacity !== containingFrameOpacity
+    prevElementWithCanvas.containingFrameOpacity !== containingFrameOpacity ||
+    prevElementWithCanvas.tableShapeKey !== tableShapeKey
   ) {
     const elementWithCanvas = generateElementCanvas(
       element,
@@ -1130,7 +1153,7 @@ const drawElement = (
           context.translate(cx, cy);
           context.rotate(element.angle);
           context.translate(-shiftX, -shiftY);
-          drawElementOnCanvas(element, rc, context, renderConfig);
+          drawElementOnCanvas(element, rc, context, renderConfig, elementsMap);
         });
       } else {
         const elementWithCanvas = generateElementWithCanvas(
@@ -1236,7 +1259,13 @@ const drawElement = (
               context.clip("evenodd");
               context.rotate(element.angle);
               context.translate(-shiftX, -shiftY);
-              drawElementOnCanvas(element, rc, context, renderConfig);
+              drawElementOnCanvas(
+                element,
+                rc,
+                context,
+                renderConfig,
+                elementsMap,
+              );
             });
           } else {
             context.rotate(element.angle);
@@ -1247,7 +1276,13 @@ const drawElement = (
             }
 
             context.translate(-shiftX, -shiftY);
-            drawElementOnCanvas(element, rc, context, renderConfig);
+            drawElementOnCanvas(
+              element,
+              rc,
+              context,
+              renderConfig,
+              elementsMap,
+            );
           }
         });
         // not exporting → optimized rendering (cache & render from element

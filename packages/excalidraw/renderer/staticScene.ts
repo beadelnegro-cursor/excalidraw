@@ -7,10 +7,11 @@ import {
 } from "@excalidraw/common";
 import { isElementLink } from "@excalidraw/element";
 import { createPlaceholderEmbeddableLabel } from "@excalidraw/element";
-import { getBoundTextElement } from "@excalidraw/element";
+import { getBoundTextElement, getTableCellElements } from "@excalidraw/element";
 import {
   isEmbeddableElement,
   isIframeLikeElement,
+  isTableElement,
   isTextElement,
 } from "@excalidraw/element";
 import {
@@ -503,6 +504,20 @@ const _renderStaticScene = ({
               renderConfig,
               appState,
             );
+          }
+
+          if (isTableElement(element)) {
+            for (const cell of getTableCellElements(element, elementsMap)) {
+              renderElement(
+                cell,
+                elementsMap,
+                allElementsMap,
+                rc,
+                context,
+                renderConfig,
+                appState,
+              );
+            }
           }
         });
 

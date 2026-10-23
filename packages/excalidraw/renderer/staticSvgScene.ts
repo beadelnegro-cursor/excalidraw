@@ -24,12 +24,17 @@ import {
   getEmbedLink,
 } from "@excalidraw/element";
 import { LinearElementEditor } from "@excalidraw/element";
-import { getBoundTextElement, getContainerElement } from "@excalidraw/element";
+import {
+  getBoundTextElement,
+  getContainerElement,
+  getTableCellElements,
+} from "@excalidraw/element";
 import { getLineHeightInPx } from "@excalidraw/element";
 import {
   isArrowElement,
   isIframeLikeElement,
   isInitializedImageElement,
+  isTableElement,
   isTextElement,
 } from "@excalidraw/element";
 
@@ -268,8 +273,43 @@ const renderElementToSvg = (
       addToRoot(g || group, element);
       break;
     }
+    case "table": {
+      const group = svgRoot.ownerDocument.createElementNS(SVG_NS, "g");
+      group.setAttribute("stroke-linecap", "round");
+      const shapes = ShapeCache.generateElementShape(
+        element,
+        renderConfig,
+        elementsMap,
+      );
+      for (const shape of shapes) {
+        const node = roughSVGDrawWithPrecision(
+          rsvg,
+          shape,
+          MAX_DECIMALS_FOR_SVG_EXPORT,
+        );
+        if (opacity !== 1) {
+          node.setAttribute("stroke-opacity", `${opacity}`);
+          node.setAttribute("fill-opacity", `${opacity}`);
+        }
+        node.setAttribute(
+          "transform",
+          `translate(${offsetX || 0} ${
+            offsetY || 0
+          }) rotate(${degree} ${cx} ${cy})`,
+        );
+        group.appendChild(node);
+      }
+      const g = maybeWrapNodesInFrameClipPath(
+        element,
+        root,
+        [group],
+        renderConfig.frameRendering,
+        elementsMap,
+      );
+      addToRoot(g || group, element);
+      break;
+    }
     case "rectangle":
-    case "table":
     case "diamond":
     case "ellipse": {
       const shape = ShapeCache.generateElementShape(element, renderConfig);
@@ -906,6 +946,21 @@ export const renderSceneToSvg = (
             console.error(
               "[NONDELETED][INVARIANT] Skipped rendering deleted bound text element",
             );
+          }
+
+          if (isTableElement(element)) {
+            for (const cell of getTableCellElements(element, elementsMap)) {
+              renderElementToSvg(
+                cell,
+                elementsMap,
+                rsvg,
+                svgRoot,
+                files,
+                cell.x + renderConfig.offsetX,
+                cell.y + renderConfig.offsetY,
+                renderConfig,
+              );
+            }
           }
         } catch (error: any) {
           console.error(error);

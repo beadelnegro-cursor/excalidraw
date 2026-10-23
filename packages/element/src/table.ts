@@ -243,12 +243,12 @@ export type TableCellElement = ExcalidrawTextElement & {
 export const getTableCellElements = (
   table: ExcalidrawTableElement,
   elements: readonly ExcalidrawElement[] | ElementsMap,
-): TableCellElement[] => {
+): NonDeleted<TableCellElement>[] => {
   const rowIndex = new Map(table.rows.map((row, index) => [row.id, index]));
   const columnIndex = new Map(
     table.columns.map((column, index) => [column.id, index]),
   );
-  const bySlot = new Map<string, TableCellElement>();
+  const bySlot = new Map<string, NonDeleted<TableCellElement>>();
   for (const element of asElements(elements)) {
     if (
       !isTableCell(element) ||
@@ -261,10 +261,10 @@ export const getTableCellElements = (
     }
     const key = slotKey(element.tableCell);
     if (!bySlot.has(key)) {
-      bySlot.set(key, element);
+      bySlot.set(key, element as NonDeleted<TableCellElement>);
     }
   }
-  const ordered: TableCellElement[] = [];
+  const ordered: NonDeleted<TableCellElement>[] = [];
   for (const row of table.rows) {
     for (const column of table.columns) {
       const cell = bySlot.get(slotKey({ rowId: row.id, columnId: column.id }));
