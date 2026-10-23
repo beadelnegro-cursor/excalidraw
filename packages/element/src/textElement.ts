@@ -5,6 +5,7 @@ import {
   DEFAULT_FONT_SIZE,
   STICKY_NOTE_BODY_INSET_Y,
   STICKY_NOTE_PADDING,
+  TABLE_CELL_PADDING,
   TEXT_ALIGN,
   VERTICAL_ALIGN,
   getFontString,
@@ -24,6 +25,7 @@ import { LinearElementEditor } from "./linearElementEditor";
 import { getPositionAfterHeightChange } from "./sizeHelpers";
 
 import { updateStickyNoteLayout } from "./stickyNote";
+import { getTableCellElements, getTableLayout } from "./table";
 import { measureText } from "./textMeasurements";
 import { wrapText } from "./textWrapping";
 
@@ -31,6 +33,7 @@ import {
   isBoundToContainer,
   isArrowElement,
   isStickyNoteElement,
+  isTableCell,
   isTableElement,
   isTextElement,
 } from "./typeChecks";
@@ -46,11 +49,55 @@ import type {
   ElementsMap,
   ExcalidrawElement,
   ExcalidrawElementType,
+  ExcalidrawTableElement,
   ExcalidrawTextContainer,
   ExcalidrawTextElement,
   ExcalidrawTextElementWithContainer,
   NonDeleted,
 } from "./types";
+
+/**
+ * A table is not a single label: every cell is placed in its own slot.
+ * `textElement` may be an uncommitted clone, so it is overlaid on the scene
+ * before measuring. Siblings are written back in place.
+ */
+const redrawTableText = (
+  table: ExcalidrawTableElement,
+  textElement: ExcalidrawTextElement,
+  scene: Scene,
+  renderEnvironment?: RenderEnvironment,
+) => {
+  const layout = getTableLayout(
+    table,
+    elementsWithOverlaidText(scene.getElementsIncludingDeleted(), textElement),
+    { renderEnvironment },
+  );
+  scene.mutateElement(table, layout.table);
+  for (const [id, update] of layout.cellUpdates) {
+    const target = id === textElement.id ? textElement : scene.getElement(id);
+    if (target && isTextElement(target)) {
+      scene.mutateElement(target, update);
+    }
+  }
+};
+
+const elementsWithOverlaidText = (
+  elements: readonly ExcalidrawElement[],
+  textElement: ExcalidrawTextElement,
+) => {
+  let found = false;
+  const next = elements.map((element) => {
+    if (element.id !== textElement.id) {
+      return element;
+    }
+    found = true;
+    return textElement;
+  });
+  if (!found) {
+    next.push(textElement);
+  }
+  return next;
+};
 
 export const redrawTextBoundingBox = (
   textElement: ExcalidrawTextElement,
@@ -68,6 +115,11 @@ export const redrawTextBoundingBox = (
       text: textElement,
       renderEnvironment,
     });
+    return;
+  }
+
+  if (container && isTableElement(container)) {
+    redrawTableText(container, textElement, scene, renderEnvironment);
     return;
   }
 
@@ -180,6 +232,24 @@ export const handleBindTextResize = (
     });
     return;
   }
+  if (isTableElement(container)) {
+    // resize itself is S5; this only keeps every cell in its slot
+    const cell = getTableCellElements(
+      container,
+      scene.getNonDeletedElementsMap(),
+    )[0];
+    if (cell) {
+      redrawTableText(container, cell, scene, renderEnvironment);
+    } else {
+      scene.mutateElement(
+        container,
+        getTableLayout(container, scene.getElementsIncludingDeleted(), {
+          renderEnvironment,
+        }).table,
+      );
+    }
+    return;
+  }
   const elementsMap = scene.getNonDeletedElementsMap();
   const boundTextElementId = getBoundTextElementId(container);
   if (!boundTextElementId) {
@@ -273,6 +343,18 @@ export const computeBoundTextPosition = (
       boundTextElement,
       elementsMap,
     );
+  }
+  if (isTableElement(container) && isTableCell(boundTextElement)) {
+    const update = getTableLayout(
+      container,
+      elementsWithOverlaidText(
+        Array.from(elementsMap.values()),
+        boundTextElement,
+      ),
+    ).cellUpdates.get(boundTextElement.id);
+    if (update) {
+      return { x: update.x, y: update.y };
+    }
   }
   const containerCoords = getContainerCoords(container);
   const maxContainerHeight = getBoundTextMaxHeight(container, boundTextElement);
@@ -587,6 +669,19 @@ export const getBoundTextMaxWidth = (
   boundTextElement: ExcalidrawTextElement | null,
 ) => {
   const { width } = container;
+  if (isTableElement(container)) {
+    const column =
+      boundTextElement && isTableCell(boundTextElement)
+        ? container.columns.find(
+            (entry) => entry.id === boundTextElement.tableCell.columnId,
+          )
+        : undefined;
+    return Math.max(
+      (column?.width ?? container.columns[0]?.width ?? width) -
+        TABLE_CELL_PADDING * 2,
+      1,
+    );
+  }
   if (isArrowElement(container)) {
     const minWidth =
       (boundTextElement?.fontSize ?? DEFAULT_FONT_SIZE) *
@@ -618,6 +713,12 @@ export const getBoundTextMaxHeight = (
   boundTextElement: ExcalidrawTextElementWithContainer,
 ) => {
   const { height } = container;
+  if (isTableElement(container) && isTableCell(boundTextElement)) {
+    const row = container.rows.find(
+      (entry) => entry.id === boundTextElement.tableCell.rowId,
+    );
+    return Math.max((row?.height ?? 0) - TABLE_CELL_PADDING * 2, 0);
+  }
   if (isStickyNoteElement(container)) {
     // the label body ends above the creation-date footer
     return Math.max(0, height - STICKY_NOTE_BODY_INSET_Y);

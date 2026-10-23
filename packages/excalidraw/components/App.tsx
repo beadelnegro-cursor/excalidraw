@@ -135,6 +135,7 @@ import {
   isBindableElement,
   isTextElement,
   isStickyNoteElement,
+  isTableElement,
   getNormalizedDimensions,
   isElementCompletelyInViewport,
   isElementInViewport,
@@ -5502,6 +5503,12 @@ class App extends React.Component<AppProps, AppState> {
                 }
               }
             }
+          } else if (isTableElement(selectedElement)) {
+            if (!selectedElement.locked) {
+              this.text.startEditingTableCell({ table: selectedElement });
+            }
+            event.preventDefault();
+            return;
           } else if (
             isTextElement(selectedElement) ||
             isValidTextContainer(selectedElement)
@@ -6399,6 +6406,16 @@ class App extends React.Component<AppProps, AppState> {
       // shouldn't edit/create text when inside line editor (often false positive)
 
       if (!this.state.selectedLinearElement?.isEditing) {
+        if (
+          this.text.editTableCellAt({
+            sceneX,
+            sceneY,
+            selectedElements,
+          })
+        ) {
+          return;
+        }
+
         const container =
           // skip binding to container on dblclick when holding ctrl
           !event[KEYS.CTRL_OR_CMD] &&

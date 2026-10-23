@@ -34,7 +34,7 @@ import { getBoundTextMaxWidth } from "./textElement";
 import { normalizeText, measureText } from "./textMeasurements";
 import { wrapText } from "./textWrapping";
 
-import { isLineElement } from "./typeChecks";
+import { isLineElement, isTableCell, isTableElement } from "./typeChecks";
 import {
   buildTableGrid,
   createTableCellElement,
@@ -630,6 +630,34 @@ export const refreshTextDimensions = (
 ) => {
   if (textElement.isDeleted) {
     return;
+  }
+  if (isTableCell(textElement)) {
+    const containerElement = elementsMap.get(textElement.containerId);
+    if (containerElement && isTableElement(containerElement)) {
+      const draft = {
+        ...textElement,
+        originalText: text,
+        text,
+      };
+      const elements = Array.from(elementsMap.values()).map((element) =>
+        element.id === textElement.id ? draft : element,
+      );
+      if (!elementsMap.has(textElement.id)) {
+        elements.push(draft);
+      }
+      const update = getTableLayout(containerElement, elements, {
+        renderEnvironment,
+      }).cellUpdates.get(textElement.id);
+      if (update) {
+        return {
+          text: update.text,
+          x: update.x,
+          y: update.y,
+          width: update.width,
+          height: update.height,
+        };
+      }
+    }
   }
   if (
     maxWidth !== undefined &&
