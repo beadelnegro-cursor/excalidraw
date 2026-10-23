@@ -165,6 +165,7 @@ export type ToolType =
   | "frame"
   | "magicframe"
   | "stickynote"
+  | "table"
   | "embeddable"
   | "laser"
   | "autoshape"
@@ -588,6 +589,15 @@ export interface AppState {
   /** user-customized font-picker top picks (pinned via drag & drop from the
    * font picker popup). `null` means no customization (defaults are used) */
   fontTopPicks: readonly FontFamilyValues[] | null;
+  /**
+   * Cell the table row/column actions apply to. Set from the context-menu
+   * pointer, or the cell being edited. Not saved or exported.
+   */
+  activeTableCell: {
+    tableId: string;
+    rowId: string;
+    columnId: string;
+  } | null;
 }
 
 export type SearchMatch = {

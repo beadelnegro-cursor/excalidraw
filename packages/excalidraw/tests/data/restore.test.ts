@@ -15,6 +15,16 @@ import {
 
 import { newElementWith } from "@excalidraw/element";
 import * as sizeHelpers from "@excalidraw/element";
+import {
+  newTableElement,
+  newTextElement,
+  syncInvalidIndices,
+} from "@excalidraw/element";
+import {
+  TABLE_MIN_COLUMN_WIDTH,
+  TABLE_MIN_ROW_HEIGHT,
+  DEFAULT_TABLE_COLUMN_WIDTH,
+} from "@excalidraw/common";
 
 import { getStickyNoteLayout } from "@excalidraw/element";
 
@@ -35,6 +45,13 @@ import { API } from "../helpers/api";
 import * as restore from "../../data/restore";
 import { getDefaultAppState } from "../../appState";
 import { serializeAsJSON } from "../../data/json";
+
+import {
+  diamondFixture,
+  ellipseFixture,
+  rectangleFixture,
+  textFixture,
+} from "../fixtures/elementFixture";
 
 import type { ImportedDataState } from "../../data/types";
 import type { LibraryItem, LibraryItem_v1, LibraryItems } from "../../types";
@@ -1592,6 +1609,231 @@ describe("repairing bindings", () => {
         containerId: null,
       }),
     ]);
+  });
+});
+
+describe("table restore", () => {
+  const laidOutTable = () => {
+    const built = newTableElement({
+      type: "table",
+      x: 12,
+      y: 24,
+      width: 300,
+      height: 150,
+      id: "table-1",
+    });
+    return syncInvalidIndices([built.table, ...built.cells]);
+  };
+
+  it("round-trips a valid table exactly", () => {
+    const scene = laidOutTable();
+    const restored = restore.restoreElements(
+      JSON.parse(JSON.stringify(scene)),
+      null,
+      { repairBindings: true },
+    );
+
+    expect(restored).toEqual(scene);
+    expect(
+      restore.restoreElements(restored, null, {
+        repairBindings: true,
+        refreshDimensions: true,
+      }),
+    ).toEqual(scene);
+  });
+
+  it("restores legacy fixtures without table fields", () => {
+    const fixtures = [
+      rectangleFixture,
+      ellipseFixture,
+      diamondFixture,
+      textFixture,
+    ];
+    // Restored one at a time: the fixtures share an id, and a combined
+    // restore rewrites duplicates. Each legacy element must come back with
+    // its own id and no table fields.
+    const restored = fixtures.map((fixture) => {
+      const [element] = restore.restoreElements(
+        JSON.parse(JSON.stringify([fixture])),
+        null,
+        { repairBindings: true, deleteInvisibleElements: true },
+      );
+      return element;
+    });
+
+    for (const [fixture, element] of fixtures.map(
+      (fixture, index) => [fixture, restored[index]] as const,
+    )) {
+      const {
+        version: _version,
+        versionNonce: _versionNonce,
+        index: restoredIndex,
+        boundElements,
+        ...rest
+      } = element;
+      const {
+        version: _fixtureVersion,
+        versionNonce: _fixtureNonce,
+        index: _fixtureIndex,
+        boundElements: _fixtureBindings,
+        ...fixtureRest
+      } = fixture;
+      // Index repair and null → [] bindings are existing restore behavior.
+      // versionNonce changes with that repair, so it is not part of the compare.
+      expect(restoredIndex).not.toBeNull();
+      expect(boundElements).toEqual([]);
+      expect(rest).toEqual(
+        element.type === "text"
+          ? { ...fixtureRest, labelPosition: null }
+          : fixtureRest,
+      );
+      expect(element).not.toHaveProperty("rows");
+      expect(element).not.toHaveProperty("columns");
+      expect(element).not.toHaveProperty("tableCell");
+      expect(element.isDeleted).toBe(false);
+      expect(element.type).toBe(fixture.type);
+      expect(element.id).toBe(fixture.id);
+
+      const [again] = restore.restoreElements([element], null, {
+        repairBindings: true,
+        deleteInvisibleElements: true,
+      });
+      expect(again).toEqual(element);
+    }
+  });
+
+  it("keeps empty cells when invisible elements are deleted", () => {
+    const scene = laidOutTable();
+    const [table, ...cells] = scene;
+    const zero = {
+      ...cells[0],
+      width: 0,
+      height: 0,
+      text: "",
+      originalText: "",
+    };
+    const restored = restore.restoreElements(
+      [table, zero, ...cells.slice(1)],
+      null,
+      {
+        repairBindings: true,
+        deleteInvisibleElements: true,
+      },
+    );
+
+    expect(restored.filter((element) => element.isDeleted)).toEqual([]);
+    expect(restored.filter((element) => element.type === "text")).toHaveLength(
+      cells.length,
+    );
+  });
+
+  it("repairs damaged tables and drops orphan cells", () => {
+    const scene = laidOutTable();
+    const table = scene[0];
+    if (table.type !== "table") {
+      throw new Error("expected a table");
+    }
+    const cells = scene.slice(1);
+    const damaged = {
+      ...table,
+      rows: [
+        { id: table.rows[0].id, height: 1 },
+        { id: table.rows[0].id, height: 80 },
+        { id: table.rows[1].id, height: table.rows[1].height },
+        { id: table.rows[2].id, height: table.rows[2].height },
+        null,
+        { id: "", height: 40 },
+      ],
+      columns: [
+        { id: table.columns[0].id, width: 5 },
+        { id: table.columns[0].id, width: 400 },
+        { id: table.columns[1].id, width: Number.NaN },
+        { id: table.columns[2].id, width: table.columns[2].width },
+      ],
+    };
+    const orphan = newTextElement({
+      x: 0,
+      y: 0,
+      text: "orphan",
+      originalText: "orphan",
+      containerId: table.id,
+      tableCell: { rowId: "missing-row", columnId: table.columns[0].id },
+      boundElements: [],
+    });
+    const duplicate = {
+      ...cells[0],
+      id: "duplicate-cell",
+    };
+    const restored = restore.restoreElements(
+      [damaged as unknown as ExcalidrawElement, ...cells, duplicate, orphan],
+      null,
+      { repairBindings: true },
+    );
+    const restoredTable = restored.find((element) => element.type === "table");
+    if (restoredTable?.type !== "table") {
+      throw new Error("expected a repaired table");
+    }
+
+    expect(restoredTable.rows.map((row) => row.id)).toEqual([
+      table.rows[0].id,
+      table.rows[1].id,
+      table.rows[2].id,
+    ]);
+    expect(restoredTable.rows[0].height).toBe(TABLE_MIN_ROW_HEIGHT);
+    expect(restoredTable.columns.map((column) => column.id)).toEqual([
+      table.columns[0].id,
+      table.columns[1].id,
+      table.columns[2].id,
+    ]);
+    expect(restoredTable.columns[0].width).toBe(TABLE_MIN_COLUMN_WIDTH);
+    expect(restoredTable.columns[1].width).toBe(DEFAULT_TABLE_COLUMN_WIDTH);
+    expect(restoredTable.width).toBe(
+      restoredTable.columns.reduce((sum, column) => sum + column.width, 0),
+    );
+    expect(
+      restored.find((element) => element.id === orphan.id)?.isDeleted,
+    ).toBe(true);
+    expect(
+      restored.find((element) => element.id === duplicate.id)?.isDeleted,
+    ).toBe(true);
+    expect(
+      restored.filter(
+        (element) => element.type === "text" && !element.isDeleted,
+      ),
+    ).toHaveLength(cells.length);
+    expect(
+      restoredTable.boundElements?.map((binding) => binding.id),
+    ).not.toContain(orphan.id);
+    expect(restoredTable.height).toBeGreaterThanOrEqual(
+      restoredTable.rows.reduce((sum, row) => sum + row.height, 0),
+    );
+  });
+
+  it("grows a row on refreshDimensions and leaves stored geometry otherwise", () => {
+    const scene = laidOutTable();
+    const table = scene[0];
+    const cells = scene.slice(1);
+    const tall = {
+      ...cells[0],
+      originalText: "a\nb\nc\nd",
+      text: "a",
+    };
+    const stored = [table, tall, ...cells.slice(1)];
+
+    const kept = restore.restoreElements(stored, null, {
+      repairBindings: true,
+    });
+    expect(kept[0].height).toBe(table.height);
+
+    const refreshed = restore.restoreElements(stored, null, {
+      repairBindings: true,
+      refreshDimensions: true,
+    });
+    expect(refreshed[0].height).toBeGreaterThan(table.height);
+    const refreshedCell = refreshed.find((element) => element.id === tall.id);
+    expect(refreshedCell && "text" in refreshedCell && refreshedCell.text).toBe(
+      "a\nb\nc\nd",
+    );
   });
 });
 

@@ -4,6 +4,8 @@ import {
   DEFAULT_FONT_SIZE,
   DEFAULT_TEXT_ALIGN,
   DEFAULT_STICKY_NOTE_SIZE,
+  DEFAULT_TABLE_HEIGHT,
+  DEFAULT_TABLE_WIDTH,
   STICKY_NOTE_MIN_SIZE,
   DEFAULT_VERTICAL_ALIGN,
   DEFAULT_STROKE_STREAMLINE,
@@ -32,7 +34,12 @@ import { getBoundTextMaxWidth } from "./textElement";
 import { normalizeText, measureText } from "./textMeasurements";
 import { wrapText } from "./textWrapping";
 
-import { isLineElement } from "./typeChecks";
+import { isLineElement, isTableCell, isTableElement } from "./typeChecks";
+import {
+  buildTableGrid,
+  createTableCellElement,
+  getTableLayout,
+} from "./table";
 
 import type { RenderEnvironment } from "./renderEnvironment";
 
@@ -58,6 +65,9 @@ import type {
   ExcalidrawElbowArrowElement,
   ExcalidrawLineElement,
   ExcalidrawStickyNoteElement,
+  ExcalidrawTableElement,
+  TableColumn,
+  TableRow,
 } from "./types";
 
 export type ElementConstructorOpts = MarkOptional<
@@ -244,6 +254,71 @@ export const newStickyNoteElement = (
   });
 };
 
+/**
+ * A table and one empty text element per cell, already laid out. Cells are
+ * created up front so later edits never change `boundElements`.
+ */
+export const newTableElement = (
+  opts: {
+    type?: "table";
+    id?: string;
+    rows?: number | readonly TableRow[];
+    columns?: number | readonly TableColumn[];
+  } & ElementConstructorOpts,
+): {
+  table: NonDeleted<ExcalidrawTableElement>;
+  cells: readonly NonDeleted<ExcalidrawTextElement>[];
+} => {
+  const grid = buildTableGrid({
+    rows: opts.rows,
+    columns: opts.columns,
+    width: opts.width ?? DEFAULT_TABLE_WIDTH,
+    height: opts.height ?? DEFAULT_TABLE_HEIGHT,
+  });
+  const width = grid.columns.reduce((sum, column) => sum + column.width, 0);
+  const height = grid.rows.reduce((sum, row) => sum + row.height, 0);
+  const base = _newElementBase<ExcalidrawTableElement>("table", {
+    ...opts,
+    width,
+    height,
+  });
+  const draft: NonDeleted<ExcalidrawTableElement> = {
+    ...base,
+    rows: grid.rows,
+    columns: grid.columns,
+    boundElements: [],
+  };
+  const cells = grid.rows.flatMap((row) =>
+    grid.columns.map((column) =>
+      createTableCellElement(draft, {
+        rowId: row.id,
+        columnId: column.id,
+      }),
+    ),
+  );
+  const bound: NonDeleted<ExcalidrawTableElement> = {
+    ...draft,
+    boundElements: cells.map((cell) => ({ type: "text", id: cell.id })),
+  };
+  const layout = getTableLayout(bound, cells);
+  const table: NonDeleted<ExcalidrawTableElement> = {
+    ...bound,
+    x: layout.table.x,
+    y: layout.table.y,
+    width: layout.table.width,
+    height: layout.table.height,
+    rows: layout.table.rows ?? bound.rows,
+    columns: layout.table.columns ?? bound.columns,
+  };
+  return {
+    table,
+    cells: cells.map((cell) => {
+      const update = layout.cellUpdates.get(cell.id);
+      return update ? { ...cell, ...update } : cell;
+    }),
+  };
+};
+
 export const newEmbeddableElement = (
   opts: {
     type: "embeddable";
@@ -347,6 +422,7 @@ export const newTextElement = (
     autoResize?: ExcalidrawTextElement["autoResize"];
     labelPosition?: ExcalidrawTextElement["labelPosition"];
     baseFontSize?: ExcalidrawTextElement["baseFontSize"];
+    tableCell?: ExcalidrawTextElement["tableCell"];
     renderEnvironment?: RenderEnvironment;
   } & ElementConstructorOpts,
 ): NonDeleted<ExcalidrawTextElement> => {
@@ -384,6 +460,7 @@ export const newTextElement = (
     autoResize: opts.autoResize ?? true,
     lineHeight,
     labelPosition: opts.labelPosition ?? null,
+    ...(opts.tableCell ? { tableCell: opts.tableCell } : {}),
   };
 
   const textElement: NonDeleted<ExcalidrawTextElement> = newElementWith(
@@ -553,6 +630,34 @@ export const refreshTextDimensions = (
 ) => {
   if (textElement.isDeleted) {
     return;
+  }
+  if (isTableCell(textElement)) {
+    const containerElement = elementsMap.get(textElement.containerId);
+    if (containerElement && isTableElement(containerElement)) {
+      const draft = {
+        ...textElement,
+        originalText: text,
+        text,
+      };
+      const elements = Array.from(elementsMap.values()).map((element) =>
+        element.id === textElement.id ? draft : element,
+      );
+      if (!elementsMap.has(textElement.id)) {
+        elements.push(draft);
+      }
+      const update = getTableLayout(containerElement, elements, {
+        renderEnvironment,
+      }).cellUpdates.get(textElement.id);
+      if (update) {
+        return {
+          text: update.text,
+          x: update.x,
+          y: update.y,
+          width: update.width,
+          height: update.height,
+        };
+      }
+    }
   }
   if (
     maxWidth !== undefined &&

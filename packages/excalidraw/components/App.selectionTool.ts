@@ -39,6 +39,7 @@ import {
   isNonDeletedElement,
   isSelectedViaGroup,
   isStickyNoteElement,
+  isTableElement,
   LinearElementEditor,
   makeNextSelectedElementIds,
   transformElements,
@@ -575,8 +576,9 @@ export class AppSelectionTool {
     const transformHandleType = pointerDownState.resize.handleType;
 
     if (
-      // Frames cannot be rotated.
-      (selectedFrames.length > 0 && transformHandleType === "rotation") ||
+      // Frames and tables cannot be rotated.
+      ((selectedFrames.length > 0 || selectedElements.some(isTableElement)) &&
+        transformHandleType === "rotation") ||
       // Elbow arrows cannot be transformed (resized or rotated).
       (selectedElements.length === 1 && isElbowArrow(selectedElements[0]))
     ) {

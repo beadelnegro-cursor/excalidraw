@@ -53,11 +53,15 @@ import { LinearElementEditor } from "@excalidraw/element";
 import {
   bumpVersion,
   getStickyNoteLayout,
+  getTableLayout,
   isStickyNoteBoundText,
   normalizeStickyNote,
   normalizeStickyNoteBackgroundColor,
   normalizeStickyNoteFontSize,
   normalizeStickyNoteStrokeColor,
+  sanitizeTableCell,
+  sanitizeTableColumns,
+  sanitizeTableRows,
 } from "@excalidraw/element";
 import { getBoundTextElement, getContainerElement } from "@excalidraw/element";
 import { isStickyNoteElement } from "@excalidraw/element";
@@ -68,6 +72,8 @@ import {
   isElbowArrow,
   isLinearElement,
   isLineElement,
+  isTableCell,
+  isTableElement,
   isTextElement,
   isUsingAdaptiveRadius,
 } from "@excalidraw/element";
@@ -232,6 +238,7 @@ export const AllowedExcalidrawActiveTools: Record<
   arrow: true,
   freedraw: true,
   stickynote: true,
+  table: true,
   eraser: false,
   custom: true,
   frame: true,
@@ -570,6 +577,10 @@ export const restoreElement = (
       const lineHeight =
         element.lineHeight ||
         restoreLineHeight({ ...element, fontSize, fontFamily, text });
+      const tableCell =
+        "tableCell" in element
+          ? sanitizeTableCell(element.tableCell)
+          : undefined;
       element = restoreElementWithProperties(element, {
         fontSize,
         fontFamily,
@@ -588,11 +599,19 @@ export const restoreElement = (
         baseFontSize: isFiniteNumber(element.baseFontSize)
           ? normalizeStickyNoteFontSize(element.baseFontSize)
           : null,
+        // absent on text that is not a cell, so old files keep their shape
+        ...(tableCell !== undefined ? { tableCell } : {}),
       });
 
       // if empty text, mark as deleted. We keep in array
       // for data integrity purposes (collab etc.)
-      if (opts?.deleteInvisibleElements && !text && !element.isDeleted) {
+      // Empty table cells stay: the grid is created up front.
+      if (
+        opts?.deleteInvisibleElements &&
+        !text &&
+        !element.isDeleted &&
+        !tableCell
+      ) {
         // TODO: we should not do this since it breaks sync / versioning when we exchange / apply just deltas and restore the elements (deletion isn't recorded)
         element = { ...element, originalText: text, isDeleted: true };
         element = bumpVersion(element);
@@ -748,6 +767,18 @@ export const restoreElement = (
             element.height,
         }),
       );
+    case "table": {
+      const rows = sanitizeTableRows(element.rows);
+      const columns = sanitizeTableColumns(element.columns);
+      const width = columns.reduce((sum, column) => sum + column.width, 0);
+      const minHeight = rows.reduce((sum, row) => sum + row.height, 0);
+      const height = Math.max(
+        isFiniteNumber(element.height) ? element.height : 0,
+        minHeight,
+      );
+      element = { ...element, rows, columns, width, height };
+      return restoreElementWithProperties(element, { rows, columns });
+    }
     case "magicframe":
     case "frame":
       return restoreElementWithProperties(element, {
@@ -953,6 +984,182 @@ const restoreStickyNotes = (
   }
 };
 
+const bindingsEqual = (
+  left: ExcalidrawElement["boundElements"],
+  right: readonly { id: string; type: string }[],
+) => {
+  if (!left || left.length !== right.length) {
+    return false;
+  }
+  return left.every(
+    (binding, index) =>
+      binding.id === right[index].id && binding.type === right[index].type,
+  );
+};
+
+const markDeleted = (element: ExcalidrawElement) => {
+  if (element.isDeleted) {
+    return;
+  }
+  const mutable = element as Mutable<ExcalidrawElement>;
+  mutable.isDeleted = true;
+  bumpVersion(mutable);
+};
+
+/**
+ * Drops cells that don't belong to a live slot. A partial remote payload
+ * often omits the table, so the table is taken from `existingElementsMap`
+ * when the payload doesn't include it. A self-contained restore (no existing
+ * scene) drops a cell whose table is missing entirely.
+ */
+const dropTableOrphans = (
+  elements: readonly ExcalidrawElement[],
+  elementsMap: ElementsMap,
+  existingElementsMap: ElementsMap | null,
+) => {
+  const resolve = (id: string | null | undefined) => {
+    if (!id) {
+      return null;
+    }
+    return elementsMap.get(id) ?? existingElementsMap?.get(id) ?? null;
+  };
+  const keptByTable = new Map<string, ExcalidrawTextElement[]>();
+
+  for (const element of elements) {
+    if (!isTextElement(element) || element.isDeleted || !element.containerId) {
+      continue;
+    }
+    const container = resolve(element.containerId);
+    if (!container || !isTableElement(container)) {
+      // No scene to borrow a table from: the cell can never be placed.
+      if (!container && !existingElementsMap && isTableCell(element)) {
+        markDeleted(element);
+      }
+      continue;
+    }
+    const slotOk =
+      !container.isDeleted &&
+      isTableCell(element) &&
+      container.rows.some((row) => row.id === element.tableCell.rowId) &&
+      container.columns.some(
+        (column) => column.id === element.tableCell.columnId,
+      );
+    if (!slotOk) {
+      markDeleted(element);
+      continue;
+    }
+    const kept = keptByTable.get(container.id) ?? [];
+    if (
+      kept.some(
+        (cell) =>
+          cell.tableCell?.rowId === element.tableCell.rowId &&
+          cell.tableCell?.columnId === element.tableCell.columnId,
+      )
+    ) {
+      markDeleted(element);
+      continue;
+    }
+    kept.push(element);
+    keptByTable.set(container.id, kept);
+  }
+
+  for (const element of elements) {
+    if (!isTableElement(element) || !element.boundElements) {
+      continue;
+    }
+    const nextBindings = element.boundElements.filter((binding) => {
+      if (binding.type !== "text") {
+        return true;
+      }
+      const bound = elementsMap.get(binding.id);
+      return !bound?.isDeleted;
+    });
+    if (!bindingsEqual(element.boundElements, nextBindings)) {
+      Object.assign(element, { boundElements: nextBindings });
+    }
+  }
+};
+
+/**
+ * After bindings are repaired: drop cells that don't belong to a live slot,
+ * keep one cell per slot, and (when asked) recompute geometry. Empty cells
+ * that still match the grid are kept. Mutates elements.
+ */
+const restoreTables = (
+  elements: readonly ExcalidrawElement[],
+  elementsMap: ElementsMap,
+  opts: { refreshDimensions: boolean },
+) => {
+  const keptByTable = new Map<string, ExcalidrawTextElement[]>();
+  for (const element of elements) {
+    if (!isTextElement(element) || element.isDeleted) {
+      continue;
+    }
+    if (!element.tableCell) {
+      const container = element.containerId
+        ? elementsMap.get(element.containerId)
+        : null;
+      if (container && isTableElement(container)) {
+        markDeleted(element);
+      }
+      continue;
+    }
+    const table = element.containerId
+      ? elementsMap.get(element.containerId)
+      : null;
+    const slotOk =
+      !!table &&
+      isTableElement(table) &&
+      !table.isDeleted &&
+      table.rows.some((row) => row.id === element.tableCell?.rowId) &&
+      table.columns.some((column) => column.id === element.tableCell?.columnId);
+    if (!slotOk || !isTableCell(element)) {
+      markDeleted(element);
+      continue;
+    }
+    const kept = keptByTable.get(table.id) ?? [];
+    if (
+      kept.some(
+        (cell) =>
+          cell.tableCell?.rowId === element.tableCell?.rowId &&
+          cell.tableCell?.columnId === element.tableCell?.columnId,
+      )
+    ) {
+      markDeleted(element);
+      continue;
+    }
+    kept.push(element);
+    keptByTable.set(table.id, kept);
+  }
+
+  for (const element of elements) {
+    if (!isTableElement(element) || element.isDeleted) {
+      continue;
+    }
+    const cells = keptByTable.get(element.id) ?? [];
+    const nextBindings = [
+      ...cells.map((cell) => ({ type: "text" as const, id: cell.id })),
+      ...(element.boundElements ?? []).filter(
+        (binding) => binding.type !== "text",
+      ),
+    ];
+    if (!bindingsEqual(element.boundElements, nextBindings)) {
+      Object.assign(element, { boundElements: nextBindings });
+    }
+    if (!opts.refreshDimensions) {
+      continue;
+    }
+    const layout = getTableLayout(element, cells);
+    Object.assign(element, layout.table);
+    for (const cell of cells) {
+      const update = layout.cellUpdates.get(cell.id);
+      if (update) {
+        Object.assign(cell, update);
+      }
+    }
+  }
+};
+
 export const restoreElements = <T extends ExcalidrawElement>(
   targetElements: readonly T[] | undefined | null,
   /** used for additional context (e.g. repairing arrow bindings) */
@@ -997,7 +1204,9 @@ export const restoreElements = <T extends ExcalidrawElement>(
         const localElement = existingElementsMap?.get(element.id);
 
         const shouldMarkAsDeleted =
-          opts?.deleteInvisibleElements && isInvisiblySmallElement(element);
+          opts?.deleteInvisibleElements &&
+          !isTableCell(element) &&
+          isInvisiblySmallElement(element);
 
         if (shouldMarkAsDeleted) {
           migratedElement = bumpVersion(migratedElement, localElement?.version);
@@ -1019,15 +1228,23 @@ export const restoreElements = <T extends ExcalidrawElement>(
     }, [] as ExcalidrawElement[]),
   );
 
+  // repair binding. Mutates elements.
+  const restoredElementsMap = arrayToMap(restoredElements);
+
+  // Collab restores remote elements without repairing bindings. Orphan cells
+  // still have to be dropped here, before reconcile, or a deleted column's
+  // text can win on version and stay visible.
   if (!opts?.repairBindings) {
+    dropTableOrphans(
+      restoredElements,
+      restoredElementsMap,
+      existingElementsMap,
+    );
     return restoredElements as CombineBrandsIfNeeded<
       T,
       OrderedExcalidrawElement
     >;
   }
-
-  // repair binding. Mutates elements.
-  const restoredElementsMap = arrayToMap(restoredElements);
   for (const element of restoredElements) {
     if (element.frameId) {
       repairFrameMembership(element, restoredElementsMap);
@@ -1074,6 +1291,10 @@ export const restoreElements = <T extends ExcalidrawElement>(
   }
 
   restoreStickyNotes(restoredElements, restoredElementsMap, {
+    refreshDimensions: !!opts.refreshDimensions,
+  });
+
+  restoreTables(restoredElements, restoredElementsMap, {
     refreshDimensions: !!opts.refreshDimensions,
   });
 

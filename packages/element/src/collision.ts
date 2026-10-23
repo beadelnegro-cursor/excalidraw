@@ -48,8 +48,10 @@ import {
   isIframeLikeElement,
   isImageElement,
   isLinearElement,
+  isTableElement,
   isTextElement,
 } from "./typeChecks";
+import { getTableCellElements } from "./table";
 import {
   deconstructDiamondElement,
   deconstructLinearOrFreeDrawElement,
@@ -89,9 +91,17 @@ export const shouldTestInside = (element: ExcalidrawElement) => {
     return false;
   }
 
+  // Grid lines cover the whole element, so a click in any cell hits the table
+  // even when the background is transparent.
+  if (element.type === "table") {
+    return true;
+  }
+
   const isDraggableFromInside =
     (hasBackground(element.type) && !isTransparent(element.backgroundColor)) ||
     hasBoundTextElement(element) ||
+    // A table's cells are not a single label, but the grid is one solid target.
+    isTableElement(element) ||
     isIframeLikeElement(element) ||
     isTextElement(element);
 
@@ -271,6 +281,15 @@ export const hitElementBoundText = (
   element: ExcalidrawElement,
   elementsMap: ElementsMap,
 ): boolean => {
+  if (isTableElement(element)) {
+    for (const cell of getTableCellElements(element, elementsMap)) {
+      if (isPointInElement(point, cell, elementsMap)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   const boundTextElementCandidate = getBoundTextElement(element, elementsMap);
 
   if (!boundTextElementCandidate) {
@@ -517,6 +536,7 @@ export const intersectElementWithLineSegment = (
   switch (element.type) {
     case "rectangle":
     case "stickynote":
+    case "table":
     case "image":
     case "text":
     case "iframe":

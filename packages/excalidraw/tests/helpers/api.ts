@@ -23,6 +23,7 @@ import {
   newLinearElement,
   newMagicFrameElement,
   newStickyNoteElement,
+  newTableElement,
   newTextElement,
 } from "@excalidraw/element";
 
@@ -45,6 +46,7 @@ import type {
   ExcalidrawElbowArrowElement,
   ExcalidrawArrowElement,
   ExcalidrawStickyNoteElement,
+  ExcalidrawTableElement,
   FixedSegment,
   NonDeleted,
   NonDeletedExcalidrawElement,
@@ -252,6 +254,8 @@ export class API {
       ? ExcalidrawMagicFrameElement
       : T extends "stickynote"
       ? ExcalidrawStickyNoteElement
+      : T extends "table"
+      ? ExcalidrawTableElement
       : ExcalidrawGenericElement
   > => {
     let element: Mutable<ExcalidrawElement> = null!;
@@ -338,6 +342,15 @@ export class API {
           type,
           baseHeight: rest.baseHeight ?? height,
         });
+        break;
+      case "table":
+        // The helper returns one element. Cell texts are created with the
+        // container; callers that need them use `newTableElement` directly.
+        element = newTableElement({
+          ...base,
+          width,
+          height,
+        }).table;
         break;
       case "text":
         const fontSize = rest.fontSize ?? appState.currentItemFontSize;

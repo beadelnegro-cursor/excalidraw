@@ -22,7 +22,7 @@ import {
 } from "./binding";
 import { getCommonBounds } from "./bounds";
 import { getPerfectElementSize } from "./sizeHelpers";
-import { getBoundTextElement } from "./textElement";
+import { getBoundTextElements } from "./textElement";
 import { getMinTextElementWidth } from "./textMeasurements";
 import {
   isArrowElement,
@@ -119,12 +119,12 @@ export const dragSelectedElements = (
     if (!isArrowElement(element)) {
       updateElementCoords(pointerDownState, element, scene, adjustedOffset);
 
-      // skip arrow labels since we calculate its position during render
-      const textElement = getBoundTextElement(
+      // Arrow labels are positioned during render. Every other bound text,
+      // including each table cell, moves with its container.
+      for (const textElement of getBoundTextElements(
         element,
         scene.getNonDeletedElementsMap(),
-      );
-      if (textElement) {
+      )) {
         updateElementCoords(
           pointerDownState,
           textElement,

@@ -54,6 +54,7 @@ import {
   isElbowArrow,
   isRectangularElement,
   isRectanguloidElement,
+  isTableElement,
   isTextElement,
 } from "./typeChecks";
 
@@ -2538,6 +2539,24 @@ export class BoundElement {
         }
 
         if (isTextElement(boundElement)) {
+          // A table owns every cell. A shape owns one label, so a second
+          // text binding is a conflict and has to be dropped.
+          if (isTableElement(bindableElement)) {
+            if (
+              !bindableElement.boundElements?.find(
+                (binding) => binding.id === boundElement.id,
+              )
+            ) {
+              updateElementWith(bindableElement, {
+                boundElements: newBoundElements(
+                  bindableElement.boundElements,
+                  new Set(),
+                  new Array(boundElement),
+                ),
+              });
+            }
+            return;
+          }
           if (!bindableElement.boundElements?.find((x) => x.type === "text")) {
             // rebind only if there is no other text bound already
             updateElementWith(bindableElement, {
@@ -2633,12 +2652,24 @@ export class BindableElement {
         }
 
         if (isTextElement(boundElement)) {
+          // A table keeps one text element per cell. The single-label rule
+          // below would drop every cell but the last whenever a row or
+          // column edit reconciles bindings.
+          if (isTableElement(bindableElement)) {
+            if (boundElement.containerId !== bindableElement.id) {
+              updateElementWith(boundElement, {
+                containerId: bindableElement.id,
+              } as ElementUpdate<ExcalidrawTextElement>);
+            }
+            return;
+          }
           const boundElements = bindableElement.boundElements?.slice() ?? [];
-          // check if this is the last element in the array, if not, there is an previously bound text which should be unbound
-          if (
+          // A table keeps every cell. A shape keeps only its last label.
+          const keepsThisText =
+            isTableElement(bindableElement) ||
             boundElements.reverse().find((x) => x.type === "text")?.id ===
-            boundElement.id
-          ) {
+              boundElement.id;
+          if (keepsThisText) {
             if (boundElement.containerId !== bindableElement.id) {
               // rebind if not bound already!
               updateElementWith(boundElement, {

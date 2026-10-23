@@ -18,6 +18,7 @@ import {
   isArrowElement,
   isFreeDrawElement,
   isLinearElement,
+  isTableCell,
 } from "./typeChecks";
 
 import type { ElementsMap, ExcalidrawElement } from "./types";
@@ -61,6 +62,10 @@ export const INVISIBLY_SMALL_ELEMENT_SIZE = 0.1;
 export const isInvisiblySmallElement = (
   element: ExcalidrawElement,
 ): boolean => {
+  // Empty cells are real elements: sync and restore must keep them.
+  if (isTableCell(element)) {
+    return false;
+  }
   if (isLinearElement(element) || isFreeDrawElement(element)) {
     return (
       element.points.length < 2 ||

@@ -30,6 +30,7 @@ import type {
   ExcalidrawFlowchartNodeElement,
   ExcalidrawLinearElementSubType,
   ExcalidrawStickyNoteElement,
+  ExcalidrawTableElement,
 } from "./types";
 
 export const isInitializedImageElement = <T extends ExcalidrawElement>(
@@ -74,6 +75,33 @@ export const isStickyNoteElement = <T extends ExcalidrawElement>(
   element: T | null | undefined,
 ): element is T & ExcalidrawStickyNoteElement => {
   return element != null && element.type === "stickynote";
+};
+
+export const isTableElement = <T extends ExcalidrawElement>(
+  element: T | null | undefined,
+): element is T & ExcalidrawTableElement => {
+  return element != null && element.type === "table";
+};
+
+/** Text bound to a table cell. Tables are not single-label containers. */
+export const isTableCell = <T extends ExcalidrawElement>(
+  element: T | null | undefined,
+): element is T &
+  ExcalidrawTextElement & {
+    tableCell: { rowId: string; columnId: string };
+    containerId: string;
+  } => {
+  return (
+    element != null &&
+    isTextElement(element) &&
+    typeof element.containerId === "string" &&
+    !!element.containerId &&
+    !!element.tableCell &&
+    typeof element.tableCell.rowId === "string" &&
+    element.tableCell.rowId.length > 0 &&
+    typeof element.tableCell.columnId === "string" &&
+    element.tableCell.columnId.length > 0
+  );
 };
 
 export const isFrameElement = <T extends ExcalidrawElement>(
@@ -190,6 +218,7 @@ export const isBindableElement = <T extends ExcalidrawElement>(
     (!element.locked || includeLocked === true) &&
     (element.type === "rectangle" ||
       element.type === "stickynote" ||
+      element.type === "table" ||
       element.type === "diamond" ||
       element.type === "ellipse" ||
       element.type === "image" ||
@@ -208,6 +237,7 @@ export const isRectanguloidElement = <T extends ExcalidrawElement>(
     element != null &&
     (element.type === "rectangle" ||
       element.type === "stickynote" ||
+      element.type === "table" ||
       element.type === "diamond" ||
       element.type === "image" ||
       element.type === "iframe" ||
@@ -227,6 +257,7 @@ export const isRectangularElement = <T extends ExcalidrawElement>(
     element != null &&
     (element.type === "rectangle" ||
       element.type === "stickynote" ||
+      element.type === "table" ||
       element.type === "image" ||
       element.type === "text" ||
       element.type === "iframe" ||
@@ -264,6 +295,7 @@ export const isExcalidrawElement = (
     case "diamond":
     case "rectangle":
     case "stickynote":
+    case "table":
     case "iframe":
     case "embeddable":
     case "ellipse":
@@ -414,6 +446,7 @@ export const isEligibleFrameChildType = (type: ElementOrToolType) => {
   switch (type) {
     case "rectangle":
     case "stickynote":
+    case "table":
     case "diamond":
     case "ellipse":
     case "arrow":

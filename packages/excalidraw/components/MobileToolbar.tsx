@@ -34,6 +34,7 @@ import {
   mermaidLogoIcon,
   MagicIcon,
   stickyNoteToolIcon,
+  tableToolIcon,
 } from "./icons";
 
 import "./ToolIcon.scss";
@@ -117,6 +118,7 @@ export const MobileToolbar = ({ app, setAppState }: MobileToolbarProps) => {
     [
       "text",
       "stickynote",
+      "table",
       "frame",
       "embeddable",
       "laser",
@@ -142,6 +144,8 @@ export const MobileToolbar = ({ app, setAppState }: MobileToolbarProps) => {
       ? frameToolIcon
       : activeTool.type === "stickynote"
       ? stickyNoteToolIcon
+      : activeTool.type === "table"
+      ? tableToolIcon
       : activeTool.type === "embeddable"
       ? EmbedIcon
       : activeTool.type === "laser"
@@ -292,6 +296,16 @@ export const MobileToolbar = ({ app, setAppState }: MobileToolbarProps) => {
             disabled={isToolButtonDisabled(app, "stickynote")}
           >
             {t("toolBar.stickynote")}
+          </DropdownMenu.Item>
+          <DropdownMenu.Item
+            onSelect={() => app.setActiveTool({ type: "table" })}
+            icon={tableToolIcon}
+            shortcut={getToolShortcut("table")}
+            data-testid="toolbar-table"
+            selected={activeTool.type === "table"}
+            disabled={isToolButtonDisabled(app, "table")}
+          >
+            {t("toolBar.table")}
           </DropdownMenu.Item>
 
           {!showFrameToolOutside && (
