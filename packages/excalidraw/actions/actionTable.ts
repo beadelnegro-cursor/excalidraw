@@ -11,6 +11,10 @@ import {
   insertTableRow,
   isTableCell,
   isTableElement,
+  isTextElement,
+  normalizeBoundElementsOrder,
+  relayoutTables,
+  syncMovedIndices,
 } from "@excalidraw/element";
 
 import type { GlobalPoint } from "@excalidraw/math";
@@ -20,6 +24,8 @@ import type {
   ExcalidrawTableElement,
   ExcalidrawTextElement,
 } from "@excalidraw/element/types";
+
+import type { RenderEnvironment } from "@excalidraw/element";
 
 import { register } from "./register";
 
@@ -130,6 +136,7 @@ const applyStructureChange = (
     addedCells: readonly ExcalidrawTextElement[];
     deletedCells: readonly ExcalidrawTextElement[];
   },
+  renderEnvironment?: RenderEnvironment,
 ) => {
   if (
     change.table === table &&
@@ -167,8 +174,19 @@ const applyStructureChange = (
     next.splice(insertAt + 1, 0, ...change.addedCells);
   }
 
+  // commitStructure sizes the table but only positions new cells. Existing
+  // cells below an inserted row, or beside a deleted column, stay where they
+  // were and overlap the new grid until something else lays the table out.
+  const laidOut = change.table.isDeleted
+    ? next
+    : relayoutTables(next, new Set([change.table.id]), { renderEnvironment });
+  // Restore groups bound text after its container and moves cells that fell
+  // out of the grid to the end, then rewrites their indices. Doing it here
+  // keeps a saved scene from changing on load.
+  const ordered = orderTableElements(laidOut);
+
   if (change.table.isDeleted) {
-    fixBindingsAfterDeletion(next, [change.table, ...change.deletedCells]);
+    fixBindingsAfterDeletion(ordered, [change.table, ...change.deletedCells]);
   }
 
   const selectedElementIds = { ...appState.selectedElementIds };
@@ -195,7 +213,7 @@ const applyStructureChange = (
       : null;
 
   return {
-    elements: next,
+    elements: ordered,
     appState: {
       ...appState,
       selectedElementIds,
@@ -204,6 +222,25 @@ const applyStructureChange = (
     },
     captureUpdate: CaptureUpdateAction.IMMEDIATELY,
   };
+};
+
+const orderTableElements = (elements: readonly ExcalidrawElement[]) => {
+  const normalized = normalizeBoundElementsOrder(elements);
+  const originalPositions = new Map(
+    elements.map((element, index) => [element.id, index]),
+  );
+  const moved = normalized.filter(
+    (element, index) =>
+      isTextElement(element) &&
+      element.containerId &&
+      originalPositions.get(element.id) !== index,
+  );
+  return moved.length
+    ? syncMovedIndices(
+        normalized,
+        new Map(moved.map((element) => [element.id, element])),
+      )
+    : normalized;
 };
 
 const performOnTarget = (
@@ -218,6 +255,7 @@ const performOnTarget = (
     addedCells: readonly ExcalidrawTextElement[];
     deletedCells: readonly ExcalidrawTextElement[];
   },
+  renderEnvironment?: RenderEnvironment,
 ) => {
   const found = getActionTarget(elements, appState);
   if (!found) {
@@ -229,6 +267,7 @@ const performOnTarget = (
     appState,
     found.table,
     changeFor(found.table, cells, found.target),
+    renderEnvironment,
   );
 };
 
@@ -253,8 +292,8 @@ const tableAction = (
     trackEvent: { category: "element" },
     predicate: (elements, appState) =>
       getActionTarget(elements, appState) !== null,
-    perform: (elements, appState) =>
-      performOnTarget(elements, appState, changeFor),
+    perform: (elements, appState, _value, app) =>
+      performOnTarget(elements, appState, changeFor, app.renderEnvironment),
   });
 
 export const actionInsertTableRowAbove = tableAction(

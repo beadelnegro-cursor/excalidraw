@@ -25,7 +25,11 @@ import { LinearElementEditor } from "./linearElementEditor";
 import { getPositionAfterHeightChange } from "./sizeHelpers";
 
 import { updateStickyNoteLayout } from "./stickyNote";
-import { getTableCellElements, getTableLayout } from "./table";
+import {
+  canonicalTableBoundElements,
+  getTableCellElements,
+  getTableLayout,
+} from "./table";
 import { measureText } from "./textMeasurements";
 import { wrapText } from "./textWrapping";
 
@@ -67,12 +71,16 @@ const redrawTableText = (
   scene: Scene,
   renderEnvironment?: RenderEnvironment,
 ) => {
-  const layout = getTableLayout(
-    table,
-    elementsWithOverlaidText(scene.getElementsIncludingDeleted(), textElement),
-    { renderEnvironment },
+  const elements = elementsWithOverlaidText(
+    scene.getElementsIncludingDeleted(),
+    textElement,
   );
-  scene.mutateElement(table, layout.table);
+  const layout = getTableLayout(table, elements, { renderEnvironment });
+  const boundElements = canonicalTableBoundElements(table, elements);
+  scene.mutateElement(table, {
+    ...layout.table,
+    ...(boundElements ? { boundElements } : {}),
+  });
   for (const [id, update] of layout.cellUpdates) {
     const target = id === textElement.id ? textElement : scene.getElement(id);
     if (target && isTextElement(target)) {

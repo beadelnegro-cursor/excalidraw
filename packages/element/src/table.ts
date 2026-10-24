@@ -641,6 +641,26 @@ const bindingsMatch = (
 };
 
 /**
+ * Text bindings in row-major slot order. History stores `boundElements` as
+ * added and removed ids, so a redo appends a new row's cells. Load rebuilds
+ * the list from slot order; returning null when the list already matches
+ * keeps a redraw from bumping `version`.
+ */
+export const canonicalTableBoundElements = (
+  table: ExcalidrawTableElement,
+  elements: readonly ExcalidrawElement[] | ElementsMap,
+): NonNullable<ExcalidrawElement["boundElements"]> | null => {
+  const nextBindings = [
+    ...getTableCellElements(table, elements).map((cell) => ({
+      type: "text" as const,
+      id: cell.id,
+    })),
+    ...(table.boundElements ?? []).filter((binding) => binding.type !== "text"),
+  ];
+  return bindingsMatch(table.boundElements, nextBindings) ? null : nextBindings;
+};
+
+/**
  * Live cells that occupy a slot, plus every other live text bound to the
  * table (duplicate slot, missing slot, or no `tableCell`).
  */
