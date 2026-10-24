@@ -51,6 +51,7 @@ import {
   getBaseFontSize,
   getBaseFontSizeUpdate,
   redrawTextBoundingBox,
+  relayoutTables,
 } from "@excalidraw/element";
 
 import {
@@ -60,6 +61,7 @@ import {
   isLinearElement,
   isLineElement,
   isStickyNoteElement,
+  isTableCell,
   isTableElement,
   isTextElement,
   isUsingAdaptiveRadius,
@@ -383,6 +385,28 @@ const changeFontSize = (
     true,
   );
 
+  // A table cell skips the single-label redraw above. Measure the new size
+  // and grow any row whose text would otherwise clip.
+  const tablesToRelayout = new Set<string>();
+  for (const element of updatedElements) {
+    if (!isTableCell(element) || element.isDeleted || !element.containerId) {
+      continue;
+    }
+    const previous = elementsMap.get(element.id);
+    if (
+      previous &&
+      isTextElement(previous) &&
+      previous.fontSize !== element.fontSize
+    ) {
+      tablesToRelayout.add(element.containerId);
+    }
+  }
+  const elementsAfterFontSize = tablesToRelayout.size
+    ? relayoutTables(updatedElements, tablesToRelayout, {
+        renderEnvironment: app.renderEnvironment,
+      })
+    : updatedElements;
+
   // Update arrow elements after text elements have been updated
   getSelectedElements(elements, appState, {
     includeBoundTextElement: true,
@@ -393,7 +417,7 @@ const changeFontSize = (
   });
 
   return {
-    elements: updatedElements,
+    elements: elementsAfterFontSize,
     appState: {
       ...appState,
       // update state only if we've set all select text elements to
