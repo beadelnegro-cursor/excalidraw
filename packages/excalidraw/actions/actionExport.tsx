@@ -60,7 +60,7 @@ export const actionChangeExportScale = register<AppState["exportScale"]>({
   trackEvent: { category: "export", action: "scale" },
   perform: (_elements, appState, value) => {
     return {
-      appState: { ...appState, exportScale: Math.min(value, 2) },
+      appState: { ...appState, exportScale: value && value > 2 ? 2 : value },
       captureUpdate: CaptureUpdateAction.EVENTUALLY,
     };
   },
