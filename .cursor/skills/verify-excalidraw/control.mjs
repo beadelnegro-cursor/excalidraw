@@ -327,8 +327,18 @@ const handlers = {
     if (!st.browser || !alive(st.browser.pid)) {
       const cdpPort = port() + 6000;
       const profile = path.join(stateDir(), "profile");
+      const executable = chromium.executablePath();
+      if (!fs.existsSync(executable)) {
+        fail(
+          `Chromium for Playwright is not installed (${executable}).`,
+          `Run: npx --prefix ${SKILL_DIR} playwright install --with-deps chromium`,
+        );
+      }
+      const browserLog = path.join(stateDir(), "browser.log");
+      fs.mkdirSync(stateDir(), { recursive: true });
+      const logFd = fs.openSync(browserLog, "w");
       const child = spawn(
-        chromium.executablePath(),
+        executable,
         [
           `--remote-debugging-port=${cdpPort}`,
           `--user-data-dir=${profile}`,
@@ -337,9 +347,12 @@ const handlers = {
           "--no-first-run",
           "--no-default-browser-check",
           "--window-size=1440,900",
+          ...(process.platform === "linux"
+            ? ["--no-sandbox", "--disable-dev-shm-usage"]
+            : []),
           "about:blank",
         ],
-        { detached: true, stdio: "ignore" },
+        { detached: true, stdio: ["ignore", logFd, logFd] },
       );
       child.unref();
       st = { ...st, browser: { pid: child.pid, cdpPort, profile } };
@@ -347,6 +360,16 @@ const handlers = {
       const deadline = Date.now() + 15000;
       while (Date.now() < deadline && !(await portInUse(cdpPort)))
         await new Promise((r) => setTimeout(r, 200));
+      if (!(await portInUse(cdpPort))) {
+        const tail = fs
+          .readFileSync(browserLog, "utf8")
+          .trim()
+          .split("\n")
+          .slice(-5);
+        fail("Chromium did not start.", `Read the browser log: ${browserLog}`, {
+          log: tail,
+        });
+      }
     }
     const browser = await chromium.connectOverCDP(
       `http://127.0.0.1:${st.browser.cdpPort}`,
