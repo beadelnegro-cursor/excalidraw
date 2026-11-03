@@ -96,9 +96,9 @@ export const fileSave = async (
     if (isAbortError(error) || !nativeFileSystemSupported) {
       throw error;
     }
-    // browser-fs-access commits to the native picker at import time and does
-    // not fall back when showSaveFilePicker rejects (cross-origin iframe, or
-    // the call lost its user activation).
+    // The native saver is chosen once, at import. It does not fall back when
+    // showSaveFilePicker rejects. That is site policy or a lost user
+    // activation. A cross-origin iframe never gets here.
     return saveWithAnchor(blob, fileName);
   }
 };
