@@ -269,7 +269,7 @@ export const actionResetZoom = register({
     const zoomValue = useAppStateValue((appState) => appState.zoom.value);
     return (
       <Tooltip
-        label={t("buttons.resetZoom")}
+        label={`${t("buttons.resetZoom")} — ${getShortCutKey("CtrlOrCmd+0")}`}
         style={{ height: "100%" }}
         className="reset-zoom-button-wrapper"
         delay
@@ -278,6 +278,7 @@ export const actionResetZoom = register({
           type="button"
           className="reset-zoom-button zoom-button"
           aria-label={t("buttons.resetZoom")}
+          aria-keyshortcuts={getShortcutKey("CtrlOrCmd+0")}
           onClick={() => {
             updateData(null);
           }}
