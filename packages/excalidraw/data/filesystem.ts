@@ -46,7 +46,26 @@ export const fileOpen = async <M extends boolean | undefined = false>(opts: {
   return (await normalizeFile(files)) as RetType;
 };
 
-export const fileSave = (
+const saveWithAnchor = async (blob: Blob | Promise<Blob>, fileName: string) => {
+  const url = URL.createObjectURL(await blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  // An immediate revoke cancels the download in Chrome.
+  window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
+  return null;
+};
+
+const isAbortError = (error: unknown) =>
+  typeof error === "object" &&
+  error !== null &&
+  "name" in error &&
+  (error as { name?: unknown }).name === "AbortError";
+
+export const fileSave = async (
   blob: Blob | Promise<Blob>,
   opts: {
     /** supply without the extension */
@@ -59,17 +78,29 @@ export const fileSave = (
     fileHandle?: FileSystemFileHandle | null;
   },
 ) => {
-  return _fileSave(
-    blob,
-    {
-      fileName: `${opts.name}.${opts.extension}`,
-      description: opts.description,
-      extensions: [`.${opts.extension}`],
-      mimeTypes: opts.mimeTypes,
-    },
-    opts.fileHandle,
-    false,
-  );
+  const fileName = `${opts.name}.${opts.extension}`;
+  try {
+    return await _fileSave(
+      blob,
+      {
+        fileName,
+        description: opts.description,
+        extensions: [`.${opts.extension}`],
+        mimeTypes: opts.mimeTypes,
+      },
+      opts.fileHandle,
+      false,
+    );
+  } catch (error) {
+    // The user dismissed the picker. A download here would ignore that.
+    if (isAbortError(error) || !nativeFileSystemSupported) {
+      throw error;
+    }
+    // The native saver is chosen once, at import. It does not fall back when
+    // showSaveFilePicker rejects. That is site policy or a lost user
+    // activation. A cross-origin iframe never gets here.
+    return saveWithAnchor(blob, fileName);
+  }
 };
 
 export { nativeFileSystemSupported };
