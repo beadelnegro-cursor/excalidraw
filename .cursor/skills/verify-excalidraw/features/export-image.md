@@ -27,3 +27,4 @@ node $C click --role button --name "Export to SVG" --download
 - Headless Chromium cancels the native save picker, so the app logs an `AbortError` from `showSaveFilePicker` and downloads nothing. `open` starts the browser with the File System Access API off, which makes the app fall back to a plain download. If you see that AbortError, the browser was started some other way: run `stop`, then `open`.
 - The buttons show "PNG" and "SVG"; their accessible names are "Export to PNG" and "Export to SVG".
 - "Only selected" is on when something is selected, so the export holds only the selection.
+- The scale choices have no accessible name. Click them by text: `click --text "3×"`, then check `state exportScale`. The PNG's pixel size is in bytes 16–24 of the file (width, height as big-endian integers); compare it with the 1× export to confirm the scale.
