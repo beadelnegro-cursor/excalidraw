@@ -202,6 +202,28 @@ describe("history", () => {
       ]);
     });
 
+    it("redoes with Ctrl+Y after undo", async () => {
+      await render(<Excalidraw handleKeyboardGlobally={true} />);
+      const rect = UI.createElement("rectangle", { x: 10 });
+
+      expect(h.elements).toEqual([
+        expect.objectContaining({ id: rect.id, isDeleted: false }),
+      ]);
+
+      Keyboard.undo();
+      expect(h.elements).toEqual([
+        expect.objectContaining({ id: rect.id, isDeleted: true }),
+      ]);
+
+      Keyboard.withModifierKeys({ ctrl: true }, () => {
+        Keyboard.keyPress(KEYS.Y);
+      });
+
+      expect(h.elements).toEqual([
+        expect.objectContaining({ id: rect.id, isDeleted: false }),
+      ]);
+    });
+
     it("should not end up with history entry when there are no appstate changes", async () => {
       await render(<Excalidraw handleKeyboardGlobally={true} />);
       const rect1 = API.createElement({ type: "rectangle", groupIds: ["A"] });

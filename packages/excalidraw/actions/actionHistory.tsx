@@ -116,7 +116,8 @@ export const createRedoAction: ActionCreator = (history) => ({
       history.redo(arrayToMap(elements) as SceneElementsMap, appState),
     ),
   keyTest: (event) =>
-    event[KEYS.CTRL_OR_CMD] && event.shiftKey && matchKey(event, KEYS.Z),
+    (event[KEYS.CTRL_OR_CMD] && event.shiftKey && matchKey(event, KEYS.Z)) ||
+    (event[KEYS.CTRL_OR_CMD] && !event.shiftKey && matchKey(event, KEYS.Y)),
   PanelComponent: ({ appState, updateData, data, app }) => {
     const { isRedoStackEmpty } = useEmitter(
       history.onHistoryChangedEmitter,
