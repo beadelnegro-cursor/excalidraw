@@ -1,0 +1,9 @@
+{
+  "name": "verify-excalidraw",
+  "private": true,
+  "type": "module",
+  "description": "Control CLI that drives the Excalidraw dev app for verification.",
+  "dependencies": {
+    "playwright": "^1.64.1"
+  }
+}

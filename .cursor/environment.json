@@ -1,9 +1,3 @@
 {
-  "install": "(command -v yarn || npm install -g yarn@1.22.22 || sudo npm install -g yarn@1.22.22) && yarn install --frozen-lockfile",
-  "terminals": [
-    {
-      "name": "Excalidraw dev server",
-      "command": "yarn start"
-    }
-  ]
+  "install": "(command -v yarn || npm install -g yarn@1.22.22 || sudo npm install -g yarn@1.22.22) && yarn install --frozen-lockfile && npm install --prefix .cursor/skills/verify-excalidraw && (npx --prefix .cursor/skills/verify-excalidraw playwright install --with-deps chromium || npx --prefix .cursor/skills/verify-excalidraw playwright install chromium)"
 }
