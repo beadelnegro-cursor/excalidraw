@@ -15,6 +15,7 @@ import type {
 import { actionToggleZenMode } from "../actions";
 
 import { t } from "../i18n";
+import { getShortcutKey } from "../shortcut";
 import { getTargetElements } from "../scene";
 
 import { getFormValue } from "../actions/actionProperties";
@@ -897,12 +898,18 @@ export const UndoRedoActions = ({
 }) => (
   <div className={`undo-redo-buttons ${className}`}>
     <div className="undo-button-container">
-      <Tooltip label={t("buttons.undo")} delay>
+      <Tooltip
+        label={`${t("buttons.undo")} — ${getShortcutKey("CtrlOrCmd+Z")}`}
+        delay
+      >
         {renderAction("undo")}
       </Tooltip>
     </div>
     <div className="redo-button-container">
-      <Tooltip label={t("buttons.redo")} delay>
+      <Tooltip
+        label={`${t("buttons.redo")} — ${getShortcutKey("CtrlOrCmd+Shift+Z")}`}
+        delay
+      >
         {renderAction("redo")}
       </Tooltip>
     </div>
