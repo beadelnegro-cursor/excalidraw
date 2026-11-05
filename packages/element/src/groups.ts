@@ -3,7 +3,7 @@ import type {
   InteractiveCanvasAppState,
 } from "@excalidraw/excalidraw/types";
 
-import { getBoundTextElement } from "./textElement";
+import { getBoundTextElements } from "./textElement";
 
 import { isBoundToContainer } from "./typeChecks";
 
@@ -195,12 +195,16 @@ export const getMaximumGroups = <
 
     const currentGroupMembers = groups.get(groupId) || [];
 
-    // Include bound text if present when grouping
-    const boundTextElement = getBoundTextElement(element, elementsMap);
-    if (boundTextElement) {
-      currentGroupMembers.push(boundTextElement as T);
+    // Include every bound text (a table's cells, or a single label).
+    for (const boundTextElement of getBoundTextElements(element, elementsMap)) {
+      if (!currentGroupMembers.includes(boundTextElement as T)) {
+        currentGroupMembers.push(boundTextElement as T);
+      }
     }
-    groups.set(groupId, [...currentGroupMembers, element]);
+    if (!currentGroupMembers.includes(element)) {
+      currentGroupMembers.push(element);
+    }
+    groups.set(groupId, currentGroupMembers);
   });
 
   return Array.from(groups.values());
@@ -304,13 +308,13 @@ export const getSelectedElementsByGroup = (
     }
 
     const currentBucketMembers = buckets.get(bucketKey) ?? [];
-    const boundTextElement = getBoundTextElement(element, elementsMap);
+    const boundTextElements = getBoundTextElements(element, elementsMap);
 
-    // preserve boundtext after container ordering
+    // preserve bound text after container ordering
     buckets.set(bucketKey, [
       ...currentBucketMembers,
       element,
-      ...(boundTextElement ? [boundTextElement] : []),
+      ...boundTextElements,
     ]);
   });
   return [...buckets.values()];

@@ -25,6 +25,7 @@ import {
 import { LinearElementEditor } from "@excalidraw/element";
 import { bumpVersion } from "@excalidraw/element";
 import {
+  getAdjacentTableCellAddress,
   getBoundTextElementId,
   getContainerElement,
   getTextElementAngle,
@@ -45,10 +46,13 @@ import {
   isArrowElement,
   isBoundToContainer,
   isStickyNoteElement,
+  isTableCell,
+  isTableElement,
   isTextElement,
 } from "@excalidraw/element";
 
 import type {
+  ExcalidrawElement,
   ExcalidrawLinearElement,
   ExcalidrawTextElementWithContainer,
   ExcalidrawTextElement,
@@ -379,9 +383,12 @@ export const textWysiwyg = ({
           updatedTextElement as ExcalidrawTextElementWithContainer,
         );
 
-        if (isStickyNoteElement(container)) {
-          // the sticky fit (App.updateElement) owns the note's height; the
-          // editor only mirrors the fitted label's position
+        if (
+          isStickyNoteElement(container) ||
+          isTableElement(container as ExcalidrawElement)
+        ) {
+          // the sticky fit and the table layout own container height; the
+          // editor only mirrors the fitted text's position
           const { x, y } = computeBoundTextPosition(
             container,
             updatedTextElement as ExcalidrawTextElementWithContainer,
@@ -828,7 +835,10 @@ export const textWysiwyg = ({
               ? boundTextElement.fontFamily
               : app.state.currentItemFontFamily,
         });
-        const maxWidth = getBoundTextMaxWidth(container, boundTextElement);
+        const maxWidth = getBoundTextMaxWidth(
+          container,
+          isTableCell(element) ? element : boundTextElement,
+        );
         const { selectionStart, selectionEnd, value } = editable;
         const nextText =
           value.slice(0, selectionStart) + text + value.slice(selectionEnd);
@@ -899,6 +909,42 @@ export const textWysiwyg = ({
       }
       submittedViaKeyboard = true;
       handleSubmit();
+    } else if (
+      event.key === KEYS.TAB &&
+      !event.altKey &&
+      !event[KEYS.CTRL_OR_CMD] &&
+      isTableCell(element)
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.isComposing) {
+        return;
+      }
+      const container = getContainerElement(
+        element,
+        app.scene.getNonDeletedElementsMap(),
+      );
+      const table = container as ExcalidrawElement | null;
+      if (!table || !isTableElement(table)) {
+        return;
+      }
+      const next = getAdjacentTableCellAddress(
+        table,
+        element.tableCell,
+        event.shiftKey ? -1 : 1,
+      );
+      if (
+        next.rowId === element.tableCell.rowId &&
+        next.columnId === element.tableCell.columnId
+      ) {
+        return;
+      }
+      submittedViaKeyboard = true;
+      handleSubmit();
+      app.text.startEditingTableCell({
+        tableId: table.id,
+        slot: next,
+      });
     } else if (
       event.key === KEYS.TAB ||
       (event[KEYS.CTRL_OR_CMD] &&
@@ -1045,7 +1091,7 @@ export const textWysiwyg = ({
       app.scene.getNonDeletedElementsMap(),
     );
 
-    if (container) {
+    if (container && !isTableElement(container as ExcalidrawElement)) {
       if (editable.value.trim()) {
         const boundTextElementId = getBoundTextElementId(container);
         if (!boundTextElementId || boundTextElementId !== element.id) {
@@ -1069,7 +1115,9 @@ export const textWysiwyg = ({
           ),
         });
       }
+    }
 
+    if (container) {
       redrawTextBoundingBox(
         updateElement,
         container,

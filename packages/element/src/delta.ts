@@ -44,12 +44,15 @@ import {
 } from "./binding";
 import { LinearElementEditor } from "./linearElementEditor";
 import { mutateElement, newElementWith } from "./mutateElement";
+import { getTableCellElements } from "./table";
 import { getBoundTextElementId, redrawTextBoundingBox } from "./textElement";
 import {
   hasBoundTextElement,
   isArrowElement,
   isBindableElement,
   isBoundToContainer,
+  isTableCell,
+  isTableElement,
   isTextElement,
 } from "./typeChecks";
 
@@ -1823,7 +1826,11 @@ export class ElementsDelta implements DeltaContainer<SceneElementsMap> {
         isTextElement(element) &&
         !element.text.trim() &&
         !element.boundElements?.length &&
-        !isArrowElement(elements.get(element.containerId ?? ""))
+        !isArrowElement(elements.get(element.containerId ?? "")) &&
+        // A table cell is empty until someone types, but its font and stroke
+        // are the cell. Treating it as invisible empty text makes a font
+        // change undo together with the next grid edit.
+        !isTableCell(element)
       ) {
         return null;
       }
@@ -2067,6 +2074,29 @@ export class ElementsDelta implements DeltaContainer<SceneElementsMap> {
     >();
 
     for (const element of changed.values()) {
+      if (isTableElement(element) || isTableCell(element)) {
+        const table = isTableElement(element)
+          ? element
+          : element.containerId
+          ? elements.get(element.containerId)
+          : undefined;
+        if (table && isTableElement(table) && !table.isDeleted) {
+          const previous = boxesToRedraw.get(table.id);
+          // a changed cell wins over the table-only entry so its clone is laid out
+          const boundText = isTableCell(element)
+            ? element
+            : previous?.boundText ?? getTableCellElements(table, elements)[0];
+          if (boundText && !boundText.isDeleted) {
+            boxesToRedraw.set(table.id, {
+              container: table,
+              boundText,
+            });
+          }
+        }
+        // Cell geometry is the table layout, not the single-label redraw.
+        continue;
+      }
+
       if (isBoundToContainer(element)) {
         const { containerId } = element as ExcalidrawTextElement;
         const container = containerId ? elements.get(containerId) : undefined;
@@ -2097,6 +2127,12 @@ export class ElementsDelta implements DeltaContainer<SceneElementsMap> {
     for (const { container, boundText } of boxesToRedraw.values()) {
       if (container.isDeleted || boundText.isDeleted) {
         // skip redraw if one of them is deleted, as it would not result in a meaningful redraw
+        continue;
+      }
+
+      // A table cell is laid out only with its table. The single-label redraw
+      // would place every cell in the same slot.
+      if (isTableCell(boundText) && !isTableElement(container)) {
         continue;
       }
 

@@ -114,6 +114,10 @@ const getHints = ({
     return t("hints.stickynote");
   }
 
+  if (activeTool.type === "table") {
+    return t("hints.table");
+  }
+
   if (activeTool.type === "autoshape") {
     return t("hints.autoshape");
   }

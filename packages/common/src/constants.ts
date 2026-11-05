@@ -264,6 +264,22 @@ export const DEFAULT_STICKY_NOTE_SIZE = 250;
 // floor for a finalized note's width and base height; the UI floor is font-aware
 // on top of it (see `getStickyNoteMinSize`)
 export const STICKY_NOTE_MIN_SIZE = 75;
+/**
+ * Table cells. Row `height` is the user-set minimum (the sticky note's
+ * `baseHeight`); the laid-out row grows above it to fit its tallest cell.
+ * `table.width` is the sum of column widths.
+ */
+export const TABLE_CELL_PADDING = 8;
+export const TABLE_MIN_COLUMN_WIDTH = 48;
+export const TABLE_MIN_ROW_HEIGHT = 32;
+export const TABLE_DEFAULT_ROW_COUNT = 3;
+export const TABLE_DEFAULT_COLUMN_COUNT = 3;
+export const DEFAULT_TABLE_COLUMN_WIDTH = 120;
+export const DEFAULT_TABLE_ROW_HEIGHT = 48;
+export const DEFAULT_TABLE_WIDTH =
+  DEFAULT_TABLE_COLUMN_WIDTH * TABLE_DEFAULT_COLUMN_COUNT;
+export const DEFAULT_TABLE_HEIGHT =
+  DEFAULT_TABLE_ROW_HEIGHT * TABLE_DEFAULT_ROW_COUNT;
 export const STICKY_NOTE_SHADOW_OFFSET = 3;
 export const STICKY_NOTE_SHADOW_OPACITY = 0.16;
 export const STICKY_NOTE_EDGE_SHADOW_WIDTH = 0.5;
@@ -565,6 +581,7 @@ export const TOOL_TYPE = {
   frame: "frame",
   magicframe: "magicframe",
   stickynote: "stickynote",
+  table: "table",
   embeddable: "embeddable",
   laser: "laser",
   autoshape: "autoshape",

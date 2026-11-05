@@ -134,7 +134,10 @@ import {
   isElbowArrow,
   isBindableElement,
   isTextElement,
+  isTableCell,
   isStickyNoteElement,
+  isTableElement,
+  getTableCellElements,
   getNormalizedDimensions,
   isElementCompletelyInViewport,
   isElementInViewport,
@@ -207,6 +210,7 @@ import {
   isEligibleFrameChildType,
   getBindingStrategyForDraggingBindingElementEndpoints,
   isNonDeletedElement,
+  relayoutTables,
 } from "@excalidraw/element";
 
 import type { GlobalPoint, LocalPoint } from "@excalidraw/math";
@@ -254,6 +258,12 @@ import {
   copyText,
   actionCopyStyles,
   actionCut,
+  actionInsertTableRowAbove,
+  actionInsertTableRowBelow,
+  actionInsertTableColumnLeft,
+  actionInsertTableColumnRight,
+  actionDeleteTableRow,
+  actionDeleteTableColumn,
   actionDeleteSelected,
   actionDuplicateSelection,
   actionFinalize,
@@ -290,6 +300,7 @@ import {
 import { createRedoAction, createUndoAction } from "../actions/actionHistory";
 import { actionTextAutoResize } from "../actions/actionTextAutoResize";
 import { actionToggleViewMode } from "../actions/actionToggleViewMode";
+import { resolveActiveTableCell } from "../actions/actionTable";
 import { ActionManager } from "../actions/manager";
 import { actions } from "../actions/register";
 import { getShortcutFromShortcutName } from "../actions/shortcuts";
@@ -400,6 +411,13 @@ import { AppSelectionTool } from "./App.selectionTool";
 import { AppWrap } from "./App.wrap";
 import BraveMeasureTextError from "./BraveMeasureTextError";
 import { ContextMenu, CONTEXT_MENU_SEPARATOR } from "./ContextMenu";
+import {
+  createDraftTable,
+  distributeTableExtent,
+  layoutTableBox,
+  replaceTableElements,
+  resolveNewTableBox,
+} from "./tableTool";
 import { activeEyeDropperAtom } from "./EyeDropper";
 import { FileDropOverlay } from "./FileDropOverlay";
 import { ViewportStatusBorder } from "./ViewportStatusFrame/ViewportStatusFrame";
@@ -4656,7 +4674,13 @@ class App extends React.Component<AppProps, AppState> {
     this.scene.replaceAllElements(nextElements);
 
     duplicatedElements.forEach((newElement) => {
-      if (isTextElement(newElement) && isBoundToContainer(newElement)) {
+      // Table cells already carry their grid position. The single-label
+      // redraw would stack every cell on the same point.
+      if (
+        isTextElement(newElement) &&
+        isBoundToContainer(newElement) &&
+        !isTableCell(newElement)
+      ) {
         const container = getContainerElement(
           newElement,
           this.scene.getElementsMapIncludingDeleted(),
@@ -4989,7 +5013,19 @@ class App extends React.Component<AppProps, AppState> {
        */
       captureUpdate?: SceneData["captureUpdate"];
     }) => {
-      const { elements, appState, collaborators, captureUpdate } = sceneData;
+      const { appState, collaborators, captureUpdate } = sceneData;
+      // Remote updates use CaptureUpdateAction.NEVER. Reconcile is
+      // whole-element, so two people growing different rows leave one table
+      // size behind. Relayout is idempotent: an already-correct scene keeps
+      // the same element objects and does not broadcast again.
+      const elements =
+        sceneData.elements && captureUpdate === CaptureUpdateAction.NEVER
+          ? relayoutTables(
+              sceneData.elements,
+              new Set(sceneData.elements.map((element) => element.id)),
+              { renderEnvironment: this.renderEnvironment },
+            )
+          : sceneData.elements;
 
       if (captureUpdate) {
         const nextElements = elements ? elements : undefined;
@@ -5502,6 +5538,12 @@ class App extends React.Component<AppProps, AppState> {
                 }
               }
             }
+          } else if (isTableElement(selectedElement)) {
+            if (!selectedElement.locked) {
+              this.text.startEditingTableCell({ table: selectedElement });
+            }
+            event.preventDefault();
+            return;
           } else if (
             isTextElement(selectedElement) ||
             isValidTextContainer(selectedElement)
@@ -6399,6 +6441,16 @@ class App extends React.Component<AppProps, AppState> {
       // shouldn't edit/create text when inside line editor (often false positive)
 
       if (!this.state.selectedLinearElement?.isEditing) {
+        if (
+          this.text.editTableCellAt({
+            sceneX,
+            sceneY,
+            selectedElements,
+          })
+        ) {
+          return;
+        }
+
         const container =
           // skip binding to container on dblclick when holding ctrl
           !event[KEYS.CTRL_OR_CMD] &&
@@ -7889,6 +7941,8 @@ class App extends React.Component<AppProps, AppState> {
       );
     } else if (this.state.activeTool.type === "autoshape") {
       this.drawShape.handlePointerDown(pointerDownState);
+    } else if (this.state.activeTool.type === "table") {
+      this.createTableElementOnPointerDown(pointerDownState);
     } else if (this.state.activeTool.type === TOOL_TYPE.bucketfill) {
       // one-shot click tool: pointer down only ARMS the fill — it commits in
       // the shared pointer-up teardown, and only when the interaction stayed
@@ -8878,6 +8932,44 @@ class App extends React.Component<AppProps, AppState> {
         newElement: element,
       });
     }
+  };
+
+  private createTableElementOnPointerDown = (
+    pointerDownState: PointerDownState,
+  ): void => {
+    const [gridX, gridY] = getGridPoint(
+      pointerDownState.origin.x,
+      pointerDownState.origin.y,
+      this.lastPointerDownEvent?.[KEYS.CTRL_OR_CMD]
+        ? null
+        : this.getEffectiveGridSize(),
+    );
+
+    const topLayerFrame = this.getTopLayerFrameAtSceneCoords({
+      x: gridX,
+      y: gridY,
+    });
+
+    const { table, cells } = createDraftTable({
+      x: gridX,
+      y: gridY,
+      strokeColor: this.state.currentItemStrokeColor,
+      backgroundColor: this.state.currentItemBackgroundColor,
+      fillStyle: this.state.currentItemFillStyle,
+      strokeWidth: this.getCurrentItemStrokeWidth("table"),
+      strokeStyle: this.state.currentItemStrokeStyle,
+      roughness: this.state.currentItemRoughness,
+      opacity: this.state.currentItemOpacity,
+      roundness: null,
+      locked: false,
+      frameId: topLayerFrame ? topLayerFrame.id : null,
+    });
+
+    this.insertNewElements([table, ...cells]);
+    this.setState({
+      multiElement: null,
+      newElement: table,
+    });
   };
 
   private createFrameElementOnPointerDown = (
@@ -9947,6 +10039,55 @@ class App extends React.Component<AppProps, AppState> {
           sceneY: newElement.y + newElement.height / 2,
           container: newElement,
         });
+        return;
+      }
+
+      if (newElement && isTableElement(newElement)) {
+        const cells = getTableCellElements(
+          newElement,
+          this.scene.getElementsIncludingDeleted(),
+        );
+        const box = resolveNewTableBox({
+          table: newElement,
+          originX: pointerDownState.origin.x,
+          originY: pointerDownState.origin.y,
+          originInGridX: pointerDownState.originInGrid.x,
+          originInGridY: pointerDownState.originInGrid.y,
+          zoom: this.state.zoom.value,
+          gridSize: childEvent[KEYS.CTRL_OR_CMD]
+            ? null
+            : this.getEffectiveGridSize(),
+        });
+        const fitted = layoutTableBox(newElement, cells, box);
+        this.scene.replaceAllElements(
+          replaceTableElements(
+            this.scene.getElementsIncludingDeleted(),
+            fitted,
+          ),
+        );
+        this.store.scheduleCapture();
+        this.scene.triggerUpdate();
+
+        if (activeTool.locked) {
+          this.setState((prevState) => ({
+            newElement: null,
+            selectedElementIds: makeNextSelectedElementIds({}, prevState),
+          }));
+          this.cursor.applyForTool();
+          return;
+        }
+
+        this.cursor.reset();
+        this.setState((prevState) => ({
+          newElement: null,
+          selectedElementIds: makeNextSelectedElementIds(
+            { [fitted.table.id]: true },
+            prevState,
+          ),
+          activeTool: updateActiveTool(this.state, {
+            type: this.state.preferredSelectionTool.type,
+          }),
+        }));
         return;
       }
 
@@ -11069,6 +11210,13 @@ class App extends React.Component<AppProps, AppState> {
 
     const type = element || isHittingCommonBoundBox ? "element" : "canvas";
 
+    const activeTableCell = resolveActiveTableCell({
+      elements: this.scene.getElementsIncludingDeleted(),
+      hit: element,
+      point: { x, y },
+      editingTextElement: this.state.editingTextElement,
+    });
+
     const container = this.excalidrawContainerRef.current!;
     const { top: offsetTop, left: offsetLeft } =
       container.getBoundingClientRect();
@@ -11084,6 +11232,7 @@ class App extends React.Component<AppProps, AppState> {
     this.setState(
       {
         showHyperlinkPopup: false,
+        activeTableCell,
       },
       () => {
         this.setState({
@@ -11197,6 +11346,13 @@ class App extends React.Component<AppProps, AppState> {
         originOffset: this.state.originSnapOffset,
         informMutation,
       });
+      if (isTableElement(newElement)) {
+        this.scene.mutateElement(
+          newElement,
+          distributeTableExtent(newElement),
+          { informMutation: false, isDragging: true },
+        );
+      }
     }
 
     this.setState({
@@ -11281,6 +11437,12 @@ class App extends React.Component<AppProps, AppState> {
         : [];
 
     return [
+      actionInsertTableRowAbove,
+      actionInsertTableRowBelow,
+      actionInsertTableColumnLeft,
+      actionInsertTableColumnRight,
+      actionDeleteTableRow,
+      actionDeleteTableColumn,
       CONTEXT_MENU_SEPARATOR,
       actionCut,
       actionCopy,

@@ -104,6 +104,18 @@ export type ExcalidrawStickyNoteElement = _ExcalidrawElementBase &
     baseHeight: number;
   }>;
 
+/** A table row's user-set minimum height. The laid-out row may be taller. */
+export type TableRow = Readonly<{ id: string; height: number }>;
+/** A table column's width. Row and column ids are scoped to one table. */
+export type TableColumn = Readonly<{ id: string; width: number }>;
+
+export type ExcalidrawTableElement = _ExcalidrawElementBase &
+  Readonly<{
+    type: "table";
+    rows: readonly TableRow[];
+    columns: readonly TableColumn[];
+  }>;
+
 export type ExcalidrawDiamondElement = _ExcalidrawElementBase & {
   type: "diamond";
 };
@@ -207,6 +219,7 @@ export type ExcalidrawFlowchartNodeElement =
 export type ExcalidrawRectanguloidElement =
   | ExcalidrawRectangleElement
   | ExcalidrawStickyNoteElement
+  | ExcalidrawTableElement
   | ExcalidrawImageElement
   | ExcalidrawTextElement
   | ExcalidrawFreeDrawElement
@@ -223,6 +236,7 @@ export type ExcalidrawRectanguloidElement =
 export type ExcalidrawElement =
   | ExcalidrawGenericElement
   | ExcalidrawStickyNoteElement
+  | ExcalidrawTableElement
   | ExcalidrawTextElement
   | ExcalidrawLinearElement
   | ExcalidrawArrowElement
@@ -288,11 +302,18 @@ export type ExcalidrawTextElement = _ExcalidrawElementBase &
      * so it survives midpoint insertion and other geometry changes.
      * */
     labelPosition?: number | null;
+    /**
+     * Set only on text that is a cell of a table (`containerId` is the
+     * table). Optional so text that is not a cell does not carry the field.
+     * Row and column ids are not remapped when the cell is duplicated.
+     */
+    tableCell?: Readonly<{ rowId: string; columnId: string }> | null;
   }>;
 
 export type ExcalidrawBindableElement =
   | ExcalidrawRectangleElement
   | ExcalidrawStickyNoteElement
+  | ExcalidrawTableElement
   | ExcalidrawDiamondElement
   | ExcalidrawEllipseElement
   | ExcalidrawTextElement

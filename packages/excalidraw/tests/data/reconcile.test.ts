@@ -1,11 +1,26 @@
-import { syncInvalidIndices } from "@excalidraw/element";
+import {
+  deleteTableColumn,
+  getBoundTextMaxHeight,
+  insertTableColumn,
+  insertTableRow,
+  isTableCell,
+  isTableElement,
+  isTextElement,
+  newElementWith,
+  newTableElement,
+  relayoutTables,
+  syncInvalidIndices,
+} from "@excalidraw/element";
 
 import { randomInteger, cloneJSON } from "@excalidraw/common";
 
 import type {
   ExcalidrawElement,
+  ExcalidrawTextElement,
   OrderedExcalidrawElement,
 } from "@excalidraw/element/types";
+
+import { restoreElements } from "../../data/restore";
 
 import { reconcileElements } from "../../data/reconcile";
 
@@ -382,5 +397,296 @@ describe("elements reconciliation", () => {
       index: "a0",
     };
     testIdentical([el1, el2], [el2, el1], ["A", "B"]);
+  });
+});
+
+const ordered = (elements: readonly ExcalidrawElement[]) =>
+  syncInvalidIndices(elements);
+
+const atVersion = (element: ExcalidrawElement, version: number) =>
+  newElementWith(element, { version, versionNonce: version });
+
+const growCell = (
+  elements: readonly ExcalidrawElement[],
+  cellId: string,
+  text: string,
+) =>
+  relayoutTables(
+    elements.map((element) => {
+      if (element.id !== cellId || !isTextElement(element)) {
+        return element;
+      }
+      return newElementWith(element, { originalText: text, text });
+    }),
+    new Set([cellId]),
+  );
+
+const textOf = (
+  elements: readonly ExcalidrawElement[],
+  id: string,
+): ExcalidrawTextElement => {
+  const element = elements.find((candidate) => candidate.id === id);
+  if (!element || element.type !== "text") {
+    throw new Error(`missing text ${id}`);
+  }
+  return element;
+};
+
+const tableOf = (elements: readonly ExcalidrawElement[]) => {
+  const table = elements.find(isTableElement);
+  if (!table) {
+    throw new Error("missing table");
+  }
+  return table;
+};
+
+/** Geometry only: versions are allowed to differ across the two clients. */
+const tableGeometry = (elements: readonly ExcalidrawElement[]) => {
+  const table = tableOf(elements);
+  return {
+    x: table.x,
+    y: table.y,
+    width: table.width,
+    height: table.height,
+    isDeleted: table.isDeleted,
+    rows: table.rows.map((row) => ({ id: row.id, height: row.height })),
+    columns: table.columns.map((column) => ({
+      id: column.id,
+      width: column.width,
+    })),
+    cells: elements
+      .filter((element) => element.type === "text")
+      .map((element) => {
+        const text = element as ExcalidrawTextElement;
+        return {
+          id: text.id,
+          isDeleted: text.isDeleted,
+          originalText: text.originalText,
+          text: text.text,
+          x: text.x,
+          y: text.y,
+          width: text.width,
+          height: text.height,
+          rowId: text.tableCell?.rowId ?? null,
+          columnId: text.tableCell?.columnId ?? null,
+        };
+      })
+      .sort((left, right) =>
+        left.id < right.id ? -1 : left.id > right.id ? 1 : 0,
+      ),
+  };
+};
+
+/**
+ * The collab path: restore the remote payload against the local scene,
+ * reconcile, then relayout. Copies inputs because reconcile mutates indices.
+ */
+const convergeTable = (
+  local: readonly ExcalidrawElement[],
+  remote: readonly ExcalidrawElement[],
+) => {
+  const localElements = structuredClone(local) as OrderedExcalidrawElement[];
+  const remoteElements = structuredClone(remote) as ExcalidrawElement[];
+  const restored = restoreElements(remoteElements, localElements);
+  const reconciled = reconcileElements(
+    localElements,
+    restored as RemoteExcalidrawElement[],
+    {} as AppState,
+  );
+  return relayoutTables(
+    reconciled,
+    new Set(reconciled.map((element) => element.id)),
+  );
+};
+
+describe("table collaboration", () => {
+  const baseTable = () => {
+    const built = newTableElement({ type: "table", x: 40, y: 80 });
+    return ordered([built.table, ...built.cells]);
+  };
+
+  it("keeps both grown cells and converges geometry in both directions", () => {
+    const base = baseTable();
+    const table = tableOf(base);
+    const rowA = table.rows[0].id;
+    const rowB = table.rows[1].id;
+    const cellA = base.find(
+      (element) => isTableCell(element) && element.tableCell.rowId === rowA,
+    )!;
+    const cellB = base.find(
+      (element) =>
+        isTableCell(element) &&
+        element.tableCell.rowId === rowB &&
+        element.tableCell.columnId === table.columns[0].id,
+    )!;
+    const textA = "a\nb\nc\nd";
+    const textB = "e\nf\ng\nh";
+
+    const clientA = growCell(base, cellA.id, textA).map((element) => {
+      if (element.id === table.id) {
+        return atVersion(element, 4);
+      }
+      if (element.id === cellA.id) {
+        return atVersion(element, 6);
+      }
+      if (element.id === cellB.id) {
+        return atVersion(element, 1);
+      }
+      return atVersion(element, 1);
+    });
+    const clientB = growCell(base, cellB.id, textB).map((element) => {
+      if (element.id === table.id) {
+        return atVersion(element, 5);
+      }
+      if (element.id === cellA.id) {
+        return atVersion(element, 1);
+      }
+      if (element.id === cellB.id) {
+        return atVersion(element, 7);
+      }
+      return atVersion(element, 1);
+    });
+
+    const forward = convergeTable(clientA, clientB);
+    const backward = convergeTable(clientB, clientA);
+
+    expect(textOf(forward, cellA.id).originalText).toBe(textA);
+    expect(textOf(forward, cellB.id).originalText).toBe(textB);
+    expect(textOf(forward, cellA.id).isDeleted).toBe(false);
+    expect(textOf(forward, cellB.id).isDeleted).toBe(false);
+    expect(tableGeometry(forward)).toEqual(tableGeometry(backward));
+    expect(tableOf(forward).height).toBeGreaterThan(tableOf(clientA).height);
+    expect(tableOf(forward).height).toBeGreaterThan(tableOf(clientB).height);
+    expect(tableOf(forward).rows[0].height).toBe(table.rows[0].height);
+    expect(tableOf(forward).rows[1].height).toBe(table.rows[1].height);
+
+    const grown = textOf(forward, cellA.id);
+    if (!isTableCell(grown)) {
+      throw new Error("expected a table cell");
+    }
+    expect(grown.height).toBeGreaterThan(
+      getBoundTextMaxHeight(tableOf(forward), grown),
+    );
+
+    expect(
+      relayoutTables(forward, new Set(forward.map((element) => element.id))),
+    ).toBe(forward);
+  });
+
+  it("lets the higher table version win a row-add versus a column-add and drops orphans", () => {
+    const base = baseTable();
+    const table = tableOf(base);
+    const cells = base.filter(isTextElement);
+    const rowChange = insertTableRow(table, cells, {
+      rowId: table.rows[0].id,
+      position: "below",
+    });
+    const columnChange = insertTableColumn(table, cells, {
+      columnId: table.columns[0].id,
+      position: "right",
+    });
+    const sceneWith = (change: typeof rowChange, tableVersion: number) =>
+      ordered([
+        atVersion(change.table, tableVersion),
+        ...cells.map((cell) => atVersion(cell, 1)),
+        ...change.addedCells.map((cell) => atVersion(cell, tableVersion)),
+      ]);
+
+    const rowScene = sceneWith(rowChange, 3);
+    const columnScene = sceneWith(columnChange, 5);
+    const fromRow = convergeTable(rowScene, columnScene);
+    const fromColumn = convergeTable(columnScene, rowScene);
+
+    expect(tableGeometry(fromRow)).toEqual(tableGeometry(fromColumn));
+    expect(tableOf(fromRow).columns.map((column) => column.id)).toEqual(
+      columnChange.table.columns.map((column) => column.id),
+    );
+    expect(tableOf(fromRow).rows.map((row) => row.id)).toEqual(
+      columnChange.table.rows.map((row) => row.id),
+    );
+    for (const cell of columnChange.addedCells) {
+      expect(textOf(fromRow, cell.id).isDeleted).toBe(false);
+      expect(textOf(fromRow, cell.id).originalText).toBe("");
+    }
+    for (const cell of rowChange.addedCells) {
+      expect(textOf(fromRow, cell.id).isDeleted).toBe(true);
+    }
+    expect(
+      relayoutTables(fromRow, new Set(fromRow.map((element) => element.id))),
+    ).toBe(fromRow);
+  });
+
+  it("drops a cell edited in a column the other client deleted", () => {
+    const base = baseTable();
+    const table = tableOf(base);
+    const cells = base.filter(isTextElement);
+    const removedColumnId = table.columns[0].id;
+    const edited = cells.find(
+      (cell) => cell.tableCell?.columnId === removedColumnId,
+    );
+    if (!edited) {
+      throw new Error("missing cell");
+    }
+    const removed = deleteTableColumn(table, cells, removedColumnId);
+    const editor = growCell(base, edited.id, "still\nhere").map((element) => {
+      if (element.id === table.id) {
+        return atVersion(element, 2);
+      }
+      if (element.id === edited.id) {
+        return atVersion(element, 20);
+      }
+      return atVersion(element, 1);
+    });
+    const deleter = ordered(
+      base.map((element) => {
+        if (element.id === table.id) {
+          return atVersion(removed.table, 8);
+        }
+        const deleted = removed.deletedCells.find(
+          (cell) => cell.id === element.id,
+        );
+        return deleted ? atVersion(deleted, 4) : atVersion(element, 1);
+      }),
+    );
+
+    const fromEditor = convergeTable(editor, deleter);
+    const fromDeleter = convergeTable(deleter, editor);
+
+    expect(tableGeometry(fromEditor)).toEqual(tableGeometry(fromDeleter));
+    expect(
+      tableOf(fromEditor).columns.map((column) => column.id),
+    ).not.toContain(removedColumnId);
+    expect(textOf(fromEditor, edited.id).isDeleted).toBe(true);
+    expect(textOf(fromDeleter, edited.id).isDeleted).toBe(true);
+
+    const inconsistent = ordered([
+      atVersion(removed.table, 8),
+      ...cells.map((cell) =>
+        cell.id === edited.id
+          ? atVersion(
+              newElementWith(cell, {
+                originalText: "still\nhere",
+                text: "still\nhere",
+              }),
+              20,
+            )
+          : atVersion(cell, 1),
+      ),
+    ]);
+    const restored = restoreElements(inconsistent, null);
+    expect(textOf(restored, edited.id).isDeleted).toBe(true);
+
+    const partialKept = restoreElements(
+      [atVersion(textOf(editor, edited.id), 20)],
+      base,
+    );
+    expect(textOf(partialKept, edited.id).isDeleted).toBe(false);
+    expect(textOf(partialKept, edited.id).originalText).toBe("still\nhere");
+
+    const partialDropped = restoreElements(
+      [atVersion(textOf(editor, edited.id), 20)],
+      deleter,
+    );
+    expect(textOf(partialDropped, edited.id).isDeleted).toBe(true);
   });
 });

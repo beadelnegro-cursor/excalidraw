@@ -11,6 +11,8 @@ import {
   MIN_FONT_SIZE,
   SHIFT_LOCKING_ANGLE,
   STICKY_NOTE_MIN_SIZE,
+  TABLE_MIN_COLUMN_WIDTH,
+  TABLE_MIN_ROW_HEIGHT,
   rescalePoints,
   getFontString,
 } from "@excalidraw/common";
@@ -60,6 +62,7 @@ import {
   isImageElement,
   isLinearElement,
   isStickyNoteElement,
+  isTableElement,
   isTextElement,
 } from "./typeChecks";
 
@@ -69,10 +72,13 @@ import {
   getStickyNoteResizeIntent,
   updateStickyNoteLayout,
 } from "./stickyNote";
+import { getTableLayout } from "./table";
 
 import type { RenderEnvironment } from "./renderEnvironment";
 
 import type { Scene } from "./Scene";
+
+import type { VerticalResizeAnchor } from "./sizeHelpers";
 
 import type { BoundingBox } from "./bounds";
 import type {
@@ -90,6 +96,7 @@ import type {
   ElementsMap,
   ExcalidrawElbowArrowElement,
   ExcalidrawArrowElement,
+  ExcalidrawTableElement,
 } from "./types";
 import type { ElementUpdate } from "./mutateElement";
 
@@ -227,7 +234,7 @@ const rotateSingleElement = (
   const cx = (x1 + x2) / 2;
   const cy = (y1 + y2) / 2;
   let angle: Radians;
-  if (isFrameLikeElement(element)) {
+  if (isFrameLikeElement(element) || isTableElement(element)) {
     angle = 0 as Radians;
   } else {
     angle = ((5 * Math.PI) / 2 +
@@ -451,7 +458,7 @@ const rotateMultipleElements = (
   >(elements.map((element) => [element.id, element]));
 
   for (const element of elements) {
-    if (!isFrameLikeElement(element)) {
+    if (!isFrameLikeElement(element) && !isTableElement(element)) {
       const [x1, y1, x2, y2] = getElementAbsoluteCoords(element, elementsMap);
       const cx = (x1 + x2) / 2;
       const cy = (y1 + y2) / 2;
@@ -745,6 +752,364 @@ const getResizedOrigin = (
   }
 };
 
+/**
+ * Split `target` across `sizes` in proportion, never below `min`.
+ * Columns already at the floor stay there and the rest absorb the difference,
+ * so a table can still hit the size the pointer asked for.
+ */
+const distributeSizes = (
+  sizes: readonly number[],
+  target: number,
+  min: number,
+): number[] => {
+  const count = sizes.length;
+  if (!count) {
+    return [];
+  }
+  const safeTarget = Math.max(target, min * count);
+  const total = sizes.reduce((sum, size) => sum + size, 0);
+  if (
+    !(total > 0) ||
+    (Math.abs(safeTarget - total) < 1e-9 && sizes.every((size) => size >= min))
+  ) {
+    return sizes.slice();
+  }
+
+  const locked = new Array<boolean>(count).fill(false);
+  const result = new Array<number>(count).fill(min);
+  for (let pass = 0; pass < count; pass++) {
+    let lockedSum = 0;
+    let freeSum = 0;
+    let freeCount = 0;
+    for (let index = 0; index < count; index++) {
+      if (locked[index]) {
+        lockedSum += min;
+      } else {
+        freeSum += sizes[index];
+        freeCount += 1;
+      }
+    }
+    const remaining = safeTarget - lockedSum;
+    let lockAnother = false;
+    for (let index = 0; index < count; index++) {
+      if (locked[index]) {
+        result[index] = min;
+        continue;
+      }
+      const next =
+        freeSum > 0
+          ? (sizes[index] / freeSum) * remaining
+          : remaining / freeCount;
+      if (next < min - 1e-9) {
+        locked[index] = true;
+        result[index] = min;
+        lockAnother = true;
+      } else {
+        result[index] = next;
+      }
+    }
+    if (!lockAnother) {
+      let sum = 0;
+      let lastFree = -1;
+      for (let index = 0; index < count; index++) {
+        sum += result[index];
+        if (!locked[index]) {
+          lastFree = index;
+        }
+      }
+      if (lastFree >= 0) {
+        result[lastFree] += safeTarget - sum;
+      }
+      return result;
+    }
+  }
+  return result;
+};
+
+const tableResizeAnchor = (
+  handleDirection: TransformHandleDirection,
+  proportional: boolean,
+  fromCenter: boolean,
+): VerticalResizeAnchor => {
+  if (fromCenter) {
+    return "center";
+  }
+  if (handleDirection.includes("n")) {
+    return "bottom";
+  }
+  // Shift on a side handle holds the opposite side's midpoint.
+  if (proportional && (handleDirection === "e" || handleDirection === "w")) {
+    return "center";
+  }
+  return "top";
+};
+
+const gestureChangesWidth = (
+  handleDirection: TransformHandleDirection,
+  proportional: boolean,
+) =>
+  proportional ||
+  handleDirection.includes("e") ||
+  handleDirection.includes("w");
+
+const gestureChangesHeight = (
+  handleDirection: TransformHandleDirection,
+  proportional: boolean,
+) =>
+  proportional ||
+  handleDirection.includes("n") ||
+  handleDirection.includes("s");
+
+/**
+ * The pointer (or the stats field, or a group scale) has already chosen a
+ * box. Column widths and base row heights scale to that box, then the
+ * layout pass grows any row that would clip its text. `getBoundTextMaxHeight`
+ * is the base row's content box, not the grown one — this path never uses
+ * it as a clip.
+ *
+ * A flip only supplies a new box. Column and row order are left alone, so
+ * the table moves and its grid does not mirror.
+ */
+export const relayoutResizedTable = (
+  orig: ExcalidrawTableElement,
+  latest: ExcalidrawTableElement,
+  scene: Scene,
+  box: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    angle: Radians;
+  },
+  {
+    changesWidth,
+    changesHeight,
+    anchor,
+    handleDirection,
+    shouldMaintainAspectRatio = false,
+    shouldResizeFromCenter = false,
+    shouldInformMutation = true,
+    renderEnvironment,
+  }: {
+    changesWidth: boolean;
+    changesHeight: boolean;
+    anchor: VerticalResizeAnchor;
+    handleDirection: TransformHandleDirection;
+    shouldMaintainAspectRatio?: boolean;
+    shouldResizeFromCenter?: boolean;
+    shouldInformMutation?: boolean;
+    renderEnvironment?: RenderEnvironment;
+  },
+) => {
+  const minWidth = TABLE_MIN_COLUMN_WIDTH * orig.columns.length;
+  const minHeight = TABLE_MIN_ROW_HEIGHT * orig.rows.length;
+  let width = changesWidth ? Math.max(box.width, minWidth) : orig.width;
+  const height = changesHeight ? Math.max(box.height, minHeight) : box.height;
+  let x = box.x;
+  let y = box.y;
+  if (width !== box.width || height !== box.height) {
+    const fixed = getResizedOrigin(
+      pointFrom(box.x, box.y),
+      box.width,
+      box.height,
+      width,
+      height,
+      box.angle,
+      handleDirection,
+      shouldMaintainAspectRatio,
+      shouldResizeFromCenter,
+    );
+    x = fixed.x;
+    y = fixed.y;
+  }
+
+  const columnWidths = changesWidth
+    ? distributeSizes(
+        orig.columns.map((column) => column.width),
+        width,
+        TABLE_MIN_COLUMN_WIDTH,
+      )
+    : orig.columns.map((column) => column.width);
+  const rowHeights = changesHeight
+    ? distributeSizes(
+        orig.rows.map((row) => row.height),
+        height,
+        TABLE_MIN_ROW_HEIGHT,
+      )
+    : orig.rows.map((row) => row.height);
+  width = columnWidths.reduce((sum, size) => sum + size, 0);
+
+  const columns = orig.columns.map((column, index) =>
+    column.width === columnWidths[index]
+      ? column
+      : { id: column.id, width: columnWidths[index] },
+  );
+  const rows = orig.rows.map((row, index) =>
+    row.height === rowHeights[index]
+      ? row
+      : { id: row.id, height: rowHeights[index] },
+  );
+
+  // `height` is the box the gesture positioned. Content may make the table
+  // taller; the anchor is applied against this box, not against the base sum.
+  const layout = getTableLayout(
+    {
+      ...orig,
+      x,
+      y,
+      width,
+      height,
+      angle: box.angle,
+      rows,
+      columns,
+    },
+    scene.getElementsIncludingDeleted(),
+    { anchor, renderEnvironment },
+  );
+
+  scene.mutateElement(
+    latest,
+    {
+      x: layout.table.x,
+      y: layout.table.y,
+      width: layout.table.width,
+      height: layout.table.height,
+      angle: box.angle,
+      rows,
+      columns,
+    },
+    { informMutation: shouldInformMutation, isDragging: false },
+  );
+
+  const elementsMap = scene.getNonDeletedElementsMap();
+  for (const [id, update] of layout.cellUpdates) {
+    const cell = elementsMap.get(id);
+    if (cell && isTextElement(cell)) {
+      scene.mutateElement(cell, update, {
+        informMutation: shouldInformMutation,
+        isDragging: false,
+      });
+    }
+  }
+};
+
+const resizeSingleTable = (
+  nextWidth: number,
+  nextHeight: number,
+  latestElement: ExcalidrawTableElement,
+  origElement: ExcalidrawTableElement,
+  scene: Scene,
+  handleDirection: TransformHandleDirection,
+  {
+    shouldInformMutation = true,
+    shouldMaintainAspectRatio = false,
+    shouldResizeFromCenter = false,
+    renderEnvironment,
+  }: {
+    shouldMaintainAspectRatio?: boolean;
+    shouldResizeFromCenter?: boolean;
+    shouldInformMutation?: boolean;
+    renderEnvironment?: RenderEnvironment;
+  },
+) => {
+  const flipFactorX = nextWidth < 0 ? -1 : 1;
+  const flipFactorY = nextHeight < 0 ? -1 : 1;
+  let width = Math.abs(nextWidth);
+  let height = Math.abs(nextHeight);
+  const minWidth = TABLE_MIN_COLUMN_WIDTH * origElement.columns.length;
+  const minHeight = TABLE_MIN_ROW_HEIGHT * origElement.rows.length;
+  width = Math.max(width, minWidth);
+  height = Math.max(height, minHeight);
+
+  if (
+    shouldMaintainAspectRatio &&
+    origElement.width > 0 &&
+    origElement.height > 0
+  ) {
+    // Both axes share one scale, including when a floor bumps one of them.
+    const scale = Math.max(
+      width / origElement.width,
+      height / origElement.height,
+    );
+    width = origElement.width * scale;
+    height = origElement.height * scale;
+  }
+
+  const changesWidth = gestureChangesWidth(
+    handleDirection,
+    shouldMaintainAspectRatio,
+  );
+  const changesHeight = gestureChangesHeight(
+    handleDirection,
+    shouldMaintainAspectRatio,
+  );
+  if (!changesWidth) {
+    width = origElement.width;
+  }
+  if (!changesHeight) {
+    height = origElement.height;
+  }
+
+  const signedWidth = width * flipFactorX;
+  const signedHeight = height * flipFactorY;
+  const origin = getResizedOrigin(
+    pointFrom<GlobalPoint>(origElement.x, origElement.y),
+    origElement.width,
+    origElement.height,
+    signedWidth,
+    signedHeight,
+    origElement.angle,
+    handleDirection,
+    shouldMaintainAspectRatio,
+    shouldResizeFromCenter,
+  );
+  if (signedWidth < 0) {
+    origin.x += signedWidth;
+  }
+  if (signedHeight < 0) {
+    origin.y += signedHeight;
+  }
+  if (
+    width === 0 ||
+    height === 0 ||
+    !Number.isFinite(origin.x) ||
+    !Number.isFinite(origin.y)
+  ) {
+    return;
+  }
+
+  relayoutResizedTable(
+    origElement,
+    latestElement,
+    scene,
+    {
+      x: origin.x,
+      y: origin.y,
+      width,
+      height,
+      angle: origElement.angle,
+    },
+    {
+      changesWidth,
+      changesHeight,
+      anchor: tableResizeAnchor(
+        handleDirection,
+        shouldMaintainAspectRatio,
+        shouldResizeFromCenter,
+      ),
+      handleDirection,
+      shouldMaintainAspectRatio,
+      shouldResizeFromCenter,
+      shouldInformMutation,
+      renderEnvironment,
+    },
+  );
+  updateBoundElements(
+    latestElement as NonDeleted<ExcalidrawTableElement>,
+    scene,
+  );
+};
+
 export const resizeSingleElement = (
   nextWidth: number,
   nextHeight: number,
@@ -776,6 +1141,24 @@ export const resizeSingleElement = (
       nextHeight,
       renderEnvironment,
     );
+  }
+
+  if (isTableElement(latestElement) && isTableElement(origElement)) {
+    resizeSingleTable(
+      nextWidth,
+      nextHeight,
+      latestElement,
+      origElement,
+      scene,
+      handleDirection,
+      {
+        shouldInformMutation,
+        shouldMaintainAspectRatio,
+        shouldResizeFromCenter,
+        renderEnvironment,
+      },
+    );
+    return;
   }
 
   // Constraints and font scaling use magnitudes. Keep the signs for the
@@ -1558,29 +1941,63 @@ export const resizeMultipleElements = (
     } of elementsAndUpdates) {
       const { angle } = update;
 
-      scene.mutateElement(element, update);
-
-      if (isStickyNoteElement(element)) {
-        // the content correction runs before the (single) arrow pass, which
-        // must still skip arrows resized in the same gesture
-        updateStickyNoteLayout(element, scene, {
-          ...getStickyNoteResizeIntent(
-            element,
-            originalElementsMap,
+      const origForTable = originalElementsMap.get(element.id);
+      if (isTableElement(element) && isTableElement(origForTable)) {
+        // Scale from the gesture-start grid. A flip's box has the same
+        // width and height, so the columns and rows stay in their order.
+        relayoutResizedTable(
+          origForTable,
+          element,
+          scene,
+          {
+            x: update.x,
+            y: update.y,
+            width: update.width,
+            height: update.height,
+            angle: update.angle,
+          },
+          {
+            changesWidth: Math.abs(update.width - origForTable.width) > 1e-6,
+            changesHeight: Math.abs(update.height - origForTable.height) > 1e-6,
+            anchor: tableResizeAnchor(
+              handleDirection,
+              keepAspectRatio,
+              shouldResizeFromCenter,
+            ),
             handleDirection,
-            {
-              proportional: keepAspectRatio,
-              fromCenter: shouldResizeFromCenter,
-              flip: flipByX || flipByY,
-            },
-          ),
-          bindings: { simultaneouslyUpdated: elementsToUpdate },
-          renderEnvironment,
-        });
-      } else {
+            shouldMaintainAspectRatio: keepAspectRatio,
+            shouldResizeFromCenter,
+            renderEnvironment,
+          },
+        );
         updateBoundElements(element, scene, {
           simultaneouslyUpdated: elementsToUpdate,
         });
+      } else {
+        scene.mutateElement(element, update);
+
+        if (isStickyNoteElement(element)) {
+          // the content correction runs before the (single) arrow pass, which
+          // must still skip arrows resized in the same gesture
+          updateStickyNoteLayout(element, scene, {
+            ...getStickyNoteResizeIntent(
+              element,
+              originalElementsMap,
+              handleDirection,
+              {
+                proportional: keepAspectRatio,
+                fromCenter: shouldResizeFromCenter,
+                flip: flipByX || flipByY,
+              },
+            ),
+            bindings: { simultaneouslyUpdated: elementsToUpdate },
+            renderEnvironment,
+          });
+        } else {
+          updateBoundElements(element, scene, {
+            simultaneouslyUpdated: elementsToUpdate,
+          });
+        }
       }
 
       if (isBindingElement(element)) {

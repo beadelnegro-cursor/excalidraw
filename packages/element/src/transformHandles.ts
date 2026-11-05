@@ -19,6 +19,7 @@ import {
   isFrameLikeElement,
   isImageElement,
   isLinearElement,
+  isTableElement,
 } from "./typeChecks";
 
 import type {
@@ -303,7 +304,8 @@ export const getTransformHandles = (
         omitSides = OMIT_SIDES_FOR_LINE_BACKSLASH;
       }
     }
-  } else if (isFrameLikeElement(element)) {
+  } else if (isFrameLikeElement(element) || isTableElement(element)) {
+    // Tables have no rotation handle in v1, same as frames.
     omitSides = {
       ...omitSides,
       rotation: true,

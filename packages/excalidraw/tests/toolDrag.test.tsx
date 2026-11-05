@@ -2,11 +2,17 @@ import React from "react";
 
 import {
   DEFAULT_STICKY_NOTE_SIZE,
+  DEFAULT_TABLE_HEIGHT,
+  DEFAULT_TABLE_WIDTH,
   KEYS,
+  getGridPoint,
   viewportCoordsToSceneCoords,
 } from "@excalidraw/common";
 
-import type { ExcalidrawStickyNoteElement } from "@excalidraw/element/types";
+import type {
+  ExcalidrawStickyNoteElement,
+  ExcalidrawTableElement,
+} from "@excalidraw/element/types";
 
 import { Excalidraw } from "../index";
 
@@ -157,6 +163,127 @@ describe("dragging a tool out of the toolbar", () => {
     fireEvent.pointerUp(button, { ...POINTER, button: 0 });
     fireEvent.click(button);
     expect(h.state.activeTool.type).toBe("stickynote");
+    expect(h.app.toolDrag.preview).toBeNull();
+    expect(h.elements).toHaveLength(0);
+  });
+});
+
+const tableButton = () => GlobalTestState.renderResult.getByToolName("table");
+
+const liveTables = () =>
+  h.elements.filter(
+    (element) => element.type === "table" && !element.isDeleted,
+  ) as ExcalidrawTableElement[];
+
+const dragTableOut = (x: number, y: number) => {
+  fireEvent.pointerDown(tableButton(), {
+    ...POINTER,
+    button: 0,
+    clientX: 0,
+    clientY: 0,
+  });
+  fireEvent.pointerMove(window, { ...POINTER, clientX: x, clientY: y });
+};
+
+describe("dragging the table tool out of the toolbar", () => {
+  beforeEach(async () => {
+    await render(<Excalidraw handleKeyboardGlobally={true} />);
+    API.setAppState({ width: 1000, height: 800 });
+  });
+
+  it("drops a default 3×3 table centered on the pointer, as one undo", () => {
+    UI.clickTool("arrow");
+    expect(h.state.activeTool.type).toBe("arrow");
+
+    fireEvent.pointerDown(tableButton(), {
+      ...POINTER,
+      button: 0,
+      clientX: 0,
+      clientY: 0,
+    });
+    fireEvent.pointerMove(window, { ...POINTER, clientX: 3, clientY: 3 });
+    expect(h.app.toolDrag.preview).toBeNull();
+
+    fireEvent.pointerMove(window, { ...POINTER, clientX: 400, clientY: 350 });
+    const preview = h.app.toolDrag.preview!;
+    expect(preview.type).toBe("table");
+    expect([preview.width, preview.height]).toEqual([
+      DEFAULT_TABLE_WIDTH,
+      DEFAULT_TABLE_HEIGHT,
+    ]);
+    expect(h.elements).toHaveLength(0);
+    expect(API.getUndoStack()).toHaveLength(0);
+
+    fireEvent.pointerUp(GlobalTestState.interactiveCanvas, {
+      ...POINTER,
+      button: 0,
+      clientX: 400,
+      clientY: 350,
+    });
+
+    expect(h.app.toolDrag.preview).toBeNull();
+    const [table] = liveTables();
+    expect(liveTables()).toHaveLength(1);
+    expect(table.rows).toHaveLength(3);
+    expect(table.columns).toHaveLength(3);
+    const cells = h.elements.filter(
+      (element) =>
+        element.type === "text" &&
+        !element.isDeleted &&
+        element.containerId === table.id,
+    );
+    expect(cells).toHaveLength(9);
+    const center = viewportCoordsToSceneCoords(
+      { clientX: 400, clientY: 350 },
+      h.state,
+    );
+    expect(table.x + table.width / 2).toBeCloseTo(center.x);
+    expect(table.y + table.height / 2).toBeCloseTo(center.y);
+    expect(table.width).toBe(DEFAULT_TABLE_WIDTH);
+    expect(table.height).toBe(DEFAULT_TABLE_HEIGHT);
+    expect(h.state.editingTextElement).toBeNull();
+    expect(API.getUndoStack()).toHaveLength(1);
+    expect(h.state.activeTool.type).toBe("selection");
+
+    Keyboard.undo();
+    expect(liveTables()).toHaveLength(0);
+    expect(h.elements.filter((element) => !element.isDeleted)).toHaveLength(0);
+  });
+
+  it("places the preview and dropped table on the grid", () => {
+    API.setAppState({ gridModeEnabled: true, gridSize: 20 });
+    dragTableOut(300, 300);
+    const center = viewportCoordsToSceneCoords(
+      { clientX: 300, clientY: 300 },
+      h.state,
+    );
+    const [x, y] = getGridPoint(
+      center.x - DEFAULT_TABLE_WIDTH / 2,
+      center.y - DEFAULT_TABLE_HEIGHT / 2,
+      h.app.getEffectiveGridSize(),
+    );
+    expect(h.app.toolDrag.preview).toMatchObject({ x, y });
+
+    fireEvent.pointerUp(GlobalTestState.interactiveCanvas, {
+      ...POINTER,
+      button: 0,
+      clientX: 300,
+      clientY: 300,
+    });
+    expect(liveTables()[0]).toMatchObject({ x, y });
+    expect(
+      h.elements.filter(
+        (element) => element.type === "text" && !element.isDeleted,
+      ),
+    ).toHaveLength(9);
+  });
+
+  it("keeps a plain click selecting the tool", () => {
+    const button = tableButton();
+    fireEvent.pointerDown(button, { ...POINTER, button: 0 });
+    fireEvent.pointerUp(button, { ...POINTER, button: 0 });
+    fireEvent.click(button);
+    expect(h.state.activeTool.type).toBe("table");
     expect(h.app.toolDrag.preview).toBeNull();
     expect(h.elements).toHaveLength(0);
   });

@@ -13,9 +13,11 @@ import {
   getStickyNoteResizeIntent,
   isStickyNoteBoundText,
   isStickyNoteElement,
+  isTableElement,
   updateStickyNoteLayout,
 } from "@excalidraw/element";
 import {
+  relayoutResizedTable,
   rescalePointsInElement,
   resizeSingleElement,
 } from "@excalidraw/element";
@@ -103,6 +105,32 @@ const resizeElementInGroup = (
   }
 
   const updates = getResizedUpdates(anchorX, anchorY, scale, origElement);
+
+  if (isTableElement(latestElement) && isTableElement(origElement)) {
+    // Group scaling is uniform and anchored at the group's top-left, which
+    // `updates` already is. The same layout pass as a handle resize.
+    relayoutResizedTable(
+      origElement,
+      latestElement,
+      scene,
+      {
+        x: updates.x,
+        y: updates.y,
+        width: updates.width,
+        height: updates.height,
+        angle: origElement.angle,
+      },
+      {
+        changesWidth: true,
+        changesHeight: true,
+        anchor: "top",
+        handleDirection: "se",
+        renderEnvironment,
+      },
+    );
+    updateBoundElements(latestElement, scene);
+    return;
+  }
 
   scene.mutateElement(latestElement, updates);
 

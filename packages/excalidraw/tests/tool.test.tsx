@@ -12,7 +12,7 @@ import { Excalidraw } from "../index";
 import { findShapeByKey } from "../components/Tools";
 
 import { API } from "./helpers/api";
-import { Pointer } from "./helpers/ui";
+import { Keyboard, Pointer } from "./helpers/ui";
 import { act, fireEvent, GlobalTestState, render } from "./test-utils";
 
 import type { AppClassProperties, ExcalidrawImperativeAPI } from "../types";
@@ -115,6 +115,10 @@ describe("findShapeByKey()", () => {
     expect(findShapeByKey("x", app, true)).toBe("autoshape");
     // Pressing "X" while CapsLock is active (no shift) stays freedraw
     expect(findShapeByKey("X", app, false)).toBe("freedraw");
+    expect(findShapeByKey("T", app, true)).toBe("table");
+    expect(findShapeByKey("t", app, true)).toBe("table");
+    expect(findShapeByKey("T", app, false)).toBe("text");
+    expect(findShapeByKey("t", app, false)).toBe("text");
   });
 
   it("does not match plain-bound tools when shift is held", () => {
@@ -383,6 +387,15 @@ describe("toolbar", () => {
     expect(badge("rectangle")).toBe("R");
     expect(badge("text")).toBe("T");
     expect(badge("stickynote")).toBe("N");
+    expect(badge("table")).toBe("Shift+T");
     expect(badge("eraser")).toBe("E");
+  });
+
+  it("selects the table tool with Shift+T", async () => {
+    await render(<Excalidraw handleKeyboardGlobally={true} />);
+    Keyboard.withModifierKeys({ shift: true }, () => {
+      Keyboard.keyDown("T");
+    });
+    expect(window.h.state.activeTool.type).toBe("table");
   });
 });

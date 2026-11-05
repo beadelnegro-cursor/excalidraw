@@ -30,7 +30,7 @@ import {
   elementsOverlappingBBox,
 } from "./bounds";
 import { mutateElement } from "./mutateElement";
-import { getBoundTextElement, getContainerElement } from "./textElement";
+import { getBoundTextElements, getContainerElement } from "./textElement";
 import { syncMovedIndices } from "./fractionalIndex";
 import {
   isFrameElement,
@@ -602,9 +602,10 @@ export const addElementsToFrame = <T extends ElementsMapOrArray>(
 
     finalElementsToAdd.add(element);
 
-    const boundTextElement = getBoundTextElement(element, elementsMap);
-    if (boundTextElement && !finalElementsToAdd.has(boundTextElement)) {
-      finalElementsToAdd.add(boundTextElement);
+    for (const boundTextElement of getBoundTextElements(element, elementsMap)) {
+      if (!finalElementsToAdd.has(boundTextElement)) {
+        finalElementsToAdd.add(boundTextElement);
+      }
     }
   }
 
@@ -681,8 +682,10 @@ export const removeElementsFromFrame = (
       const arr = toRemoveElementsByFrame.get(element.frameId) || [];
       arr.push(element);
 
-      const boundTextElement = getBoundTextElement(element, elementsMap);
-      if (boundTextElement) {
+      for (const boundTextElement of getBoundTextElements(
+        element,
+        elementsMap,
+      )) {
         _elementsToRemove.set(boundTextElement.id, boundTextElement);
         arr.push(boundTextElement);
       }

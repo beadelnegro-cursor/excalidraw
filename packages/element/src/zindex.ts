@@ -9,7 +9,7 @@ import { isFrameLikeElement, isTextElement } from "./typeChecks";
 import { getElementsInGroup } from "./groups";
 import { syncMovedIndices } from "./fractionalIndex";
 import { getSelectedElements } from "./selection";
-import { getBoundTextElement, getContainerElement } from "./textElement";
+import { getBoundTextElements, getContainerElement } from "./textElement";
 
 import type { Scene } from "./Scene";
 import type {
@@ -91,39 +91,31 @@ const getTargetIndexAccountingForBinding = (
   direction: "left" | "right",
   scene: Scene,
 ) => {
-  if ("containerId" in nextElement && nextElement.containerId) {
-    // TODO: why not to get the container from the nextElements?
-    const containerElement = scene.getElement(nextElement.containerId);
-    if (containerElement) {
-      return direction === "left"
-        ? Math.min(
-            elements.indexOf(containerElement),
-            elements.indexOf(nextElement),
-          )
-        : Math.max(
-            elements.indexOf(containerElement),
-            elements.indexOf(nextElement),
-          );
-    }
-  } else {
-    const boundElementId = nextElement.boundElements?.find(
-      (binding) => binding.type !== "arrow",
-    )?.id;
-    if (boundElementId) {
-      const boundTextElement = scene.getElement(boundElementId);
-      if (boundTextElement) {
-        return direction === "left"
-          ? Math.min(
-              elements.indexOf(boundTextElement),
-              elements.indexOf(nextElement),
-            )
-          : Math.max(
-              elements.indexOf(boundTextElement),
-              elements.indexOf(nextElement),
-            );
-      }
-    }
+  const containerElement =
+    "containerId" in nextElement && nextElement.containerId
+      ? scene.getElement(nextElement.containerId)
+      : null;
+  const boundRoot = containerElement ?? nextElement;
+  const boundTexts = getBoundTextElements(
+    boundRoot,
+    scene.getNonDeletedElementsMap(),
+  );
+
+  if (!containerElement && boundTexts.length === 0) {
+    return;
   }
+
+  const indices = [
+    elements.indexOf(nextElement),
+    ...(containerElement ? [elements.indexOf(containerElement)] : []),
+    ...boundTexts.map((text) => elements.indexOf(text)),
+  ].filter((index) => index >= 0);
+
+  if (!indices.length) {
+    return;
+  }
+
+  return direction === "left" ? Math.min(...indices) : Math.max(...indices);
 };
 
 const getContiguousFrameRangeElements = (
@@ -162,17 +154,30 @@ export const moveArrowAboveBindable = (
     return elements;
   }
 
-  const boundTextElement = getBoundTextElement(hoveredElement, elementsMap);
   const containerElement = isTextElement(hoveredElement)
     ? getContainerElement(hoveredElement, elementsMap)
     : null;
+  const boundTexts = getBoundTextElements(
+    containerElement ?? hoveredElement,
+    elementsMap,
+  );
 
   const bindableIds = [
     hoveredElement.id,
-    boundTextElement?.id,
     containerElement?.id,
+    ...boundTexts.map((text) => text.id),
   ].filter((id): id is NonDeletedExcalidrawElement["id"] => !!id);
-  const bindableIdx = elements.findIndex((el) => bindableIds.includes(el.id));
+  // One label stays put above the arrow (lowest member is the anchor, and the
+  // splice below lands the arrow just after it). Several cells are one unit
+  // with the table, so the arrow goes above the highest of them.
+  const bindableIdx =
+    boundTexts.length > 1
+      ? elements.reduce(
+          (highest, element, index) =>
+            bindableIds.includes(element.id) ? index : highest,
+          -1,
+        )
+      : elements.findIndex((el) => bindableIds.includes(el.id));
   const arrowIdx = elements.findIndex((el) => el.id === arrow.id);
 
   if (arrowIdx !== -1 && bindableIdx !== -1 && arrowIdx < bindableIdx) {

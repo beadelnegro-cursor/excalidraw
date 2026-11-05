@@ -20,6 +20,7 @@ import {
   isFreeDrawElement,
   isTextElement,
   isFrameLikeElement,
+  isTableElement,
 } from "@excalidraw/element";
 import { KEYS, arrayToMap, getLineHeight } from "@excalidraw/common";
 
@@ -372,13 +373,15 @@ const transform = (
     )[handle];
   } else {
     const [x1, y1, x2, y2] = getCommonBounds(elements);
-    const isFrameSelected = elements.some(isFrameLikeElement);
+    const omitsRotation = elements.some(
+      (element) => isFrameLikeElement(element) || isTableElement(element),
+    );
     const transformHandles = getTransformHandlesFromCoords(
       [x1, y1, x2, y2, (x1 + x2) / 2, (y1 + y2) / 2],
       0 as Radians,
       h.state.zoom,
       "mouse",
-      isFrameSelected ? OMIT_SIDES_FOR_FRAME : OMIT_SIDES_FOR_MULTIPLE_ELEMENTS,
+      omitsRotation ? OMIT_SIDES_FOR_FRAME : OMIT_SIDES_FOR_MULTIPLE_ELEMENTS,
     );
     handleCoords = transformHandles[handle];
   }

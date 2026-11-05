@@ -1,5 +1,7 @@
 import {
   DEFAULT_STICKY_NOTE_SIZE,
+  DEFAULT_TABLE_HEIGHT,
+  DEFAULT_TABLE_WIDTH,
   DRAGGING_THRESHOLD,
   EVENT,
   KEYS,
@@ -7,14 +9,24 @@ import {
   viewportCoordsToSceneCoords,
 } from "@excalidraw/common";
 
-import { isStickyNoteElement, newStickyNoteElement } from "@excalidraw/element";
+import {
+  createTableCellElement,
+  isStickyNoteElement,
+  isTableElement,
+  newStickyNoteElement,
+  newTableElement,
+} from "@excalidraw/element";
 
 import type {
+  ExcalidrawElement,
   ExcalidrawNonSelectionElement,
+  ExcalidrawTableElement,
   NonDeleted,
 } from "@excalidraw/element/types";
 
 import { trackEvent } from "../analytics";
+
+import { layoutTableBox } from "./tableTool";
 
 import type App from "./App";
 import type { ToolType } from "../types";
@@ -31,6 +43,14 @@ type DraggedElement = NonDeleted<ExcalidrawNonSelectionElement>;
 type DraggableTool = {
   /** the element the drop creates, centered on the pointer */
   createElement: (app: App, center: ScenePoint) => DraggedElement;
+  /**
+   * Rewrite the preview into the elements the drop inserts. Companions
+   * (table cells) land in the same history entry as the element.
+   */
+  prepareDrop?: (element: DraggedElement) => {
+    element: DraggedElement;
+    companions?: readonly ExcalidrawElement[];
+  };
   /** what the tool does once its element is on the canvas (e.g. start editing) */
   onDrop?: (app: App, element: DraggedElement) => void;
 };
@@ -75,6 +95,49 @@ export const DRAGGABLE_TOOLS: Partial<Record<ToolType, DraggableTool>> = {
           container: element,
         });
       }
+    },
+  },
+  table: {
+    createElement: (app, center) => {
+      const { state } = app;
+      const { table } = newTableElement({
+        type: "table",
+        ...centered(center, DEFAULT_TABLE_WIDTH, DEFAULT_TABLE_HEIGHT),
+        strokeColor: state.currentItemStrokeColor,
+        backgroundColor: state.currentItemBackgroundColor,
+        fillStyle: state.currentItemFillStyle,
+        strokeWidth: app.getCurrentItemStrokeWidth("table"),
+        strokeStyle: state.currentItemStrokeStyle,
+        roughness: state.currentItemRoughness,
+        opacity: state.currentItemOpacity,
+        roundness: null,
+        locked: false,
+        frameId: app.getTopLayerFrameAtSceneCoords(center)?.id ?? null,
+      });
+      return table;
+    },
+    prepareDrop: (element) => {
+      if (!isTableElement(element)) {
+        return { element };
+      }
+      const cells = element.rows.flatMap((row) =>
+        element.columns.map((column) =>
+          createTableCellElement(element, {
+            rowId: row.id,
+            columnId: column.id,
+          }),
+        ),
+      );
+      const fitted = layoutTableBox(element, cells, {
+        x: element.x,
+        y: element.y,
+        width: element.width,
+        height: element.height,
+      });
+      return {
+        element: fitted.table as NonDeleted<ExcalidrawTableElement>,
+        companions: fitted.cells,
+      };
     },
   },
 };
@@ -179,10 +242,16 @@ export class AppToolDrag {
       return;
     }
     const { app } = this;
-    app.insertNewElement(preview);
+    const prepared = tool!.prepareDrop?.(preview) ?? { element: preview };
+    const companions = prepared.companions ?? [];
+    if (companions.length) {
+      app.insertNewElements([prepared.element, ...companions]);
+    } else {
+      app.insertNewElement(prepared.element);
+    }
     app.store.scheduleCapture();
     app.setState({
-      selectedElementIds: { [preview.id]: true },
+      selectedElementIds: { [prepared.element.id]: true },
       selectedGroupIds: {},
     });
     // the drop is a one-off placement: whatever tool was active (an arrow,
@@ -192,7 +261,7 @@ export class AppToolDrag {
       { keepSelection: true },
     );
     trackEvent("toolbar", type!, "drop");
-    tool!.onDrop?.(app, preview);
+    tool!.onDrop?.(app, prepared.element);
   };
 
   private onKeyDown = (event: KeyboardEvent) => {
