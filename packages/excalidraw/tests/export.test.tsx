@@ -18,7 +18,7 @@ import {
 } from "../scene/export";
 
 import { API } from "./helpers/api";
-import { render, waitFor } from "./test-utils";
+import { fireEvent, render, waitFor } from "./test-utils";
 
 const { h } = window;
 
@@ -260,5 +260,23 @@ describe("export", () => {
     // in case of regressions, save the SVG to a file and visually compare to:
     // src/tests/fixtures/svg-image-exporting-reference.svg
     expect(svgText).toMatchSnapshot(`svg export output`);
+  });
+
+  it("keeps a 3× scale chosen in the export dialog", async () => {
+    API.setAppState({ openDialog: { name: "imageExport" } });
+
+    await waitFor(() => {
+      expect(
+        document.querySelector(".excalidraw-modal-container"),
+      ).not.toBeNull();
+    });
+
+    const scaleChoice = [
+      ...document.querySelectorAll(".RadioGroup__choice"),
+    ].find((choice) => choice.textContent === "3\u00d7");
+    expect(scaleChoice).toBeTruthy();
+    fireEvent.click(scaleChoice!.querySelector("input")!);
+
+    expect(h.state.exportScale).toBe(3);
   });
 });
