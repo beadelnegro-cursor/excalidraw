@@ -4,6 +4,7 @@ import { SVG_NS } from "@excalidraw/common";
 
 import type { FileId, FractionalIndex } from "@excalidraw/element/types";
 
+import { actionChangeExportScale } from "../actions/actionExport";
 import { getDefaultAppState } from "../appState";
 import * as clipboardModule from "../clipboard";
 import { exportCanvas, prepareElementsForExport } from "../data";
@@ -15,10 +16,11 @@ import {
   decodeSvgBase64Payload,
   encodeSvgBase64Payload,
   exportScene,
+  getExportConfigFromAppState,
 } from "../scene/export";
 
 import { API } from "./helpers/api";
-import { render, waitFor } from "./test-utils";
+import { act, render, waitFor } from "./test-utils";
 
 const { h } = window;
 
@@ -260,5 +262,50 @@ describe("export", () => {
     // in case of regressions, save the SVG to a file and visually compare to:
     // src/tests/fixtures/svg-image-exporting-reference.svg
     expect(svgText).toMatchSnapshot(`svg export output`);
+  });
+
+  it("exports a PNG at 3× larger than at 2× when that scale is chosen", async () => {
+    const element = API.createElement({
+      type: "rectangle",
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 40,
+    });
+
+    const canvasAt = async (scale: number) => {
+      act(() => {
+        h.app.actionManager.executeAction(actionChangeExportScale, "ui", scale);
+      });
+      return exportScene({
+        type: "canvas",
+        data: {
+          elements: [element],
+          appState: h.state,
+          files: {},
+        },
+        config: {
+          ...getExportConfigFromAppState(h.state),
+          padding: 0,
+        },
+      });
+    };
+
+    const at2 = await canvasAt(2);
+    const at3 = await canvasAt(3);
+
+    expect({
+      exportScale: h.state.exportScale,
+      widthAt2: at2.width,
+      heightAt2: at2.height,
+      widthAt3: at3.width,
+      heightAt3: at3.height,
+    }).toEqual({
+      exportScale: 3,
+      widthAt2: at2.width,
+      heightAt2: at2.height,
+      widthAt3: at2.width * 1.5,
+      heightAt3: at2.height * 1.5,
+    });
   });
 });
