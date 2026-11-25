@@ -4,6 +4,7 @@ import { SVG_NS } from "@excalidraw/common";
 
 import type { FileId, FractionalIndex } from "@excalidraw/element/types";
 
+import { actionChangeExportScale } from "../actions/actionExport";
 import { getDefaultAppState } from "../appState";
 import * as clipboardModule from "../clipboard";
 import { exportCanvas, prepareElementsForExport } from "../data";
@@ -18,7 +19,7 @@ import {
 } from "../scene/export";
 
 import { API } from "./helpers/api";
-import { render, waitFor } from "./test-utils";
+import { act, render, waitFor } from "./test-utils";
 
 const { h } = window;
 
@@ -110,6 +111,41 @@ describe("export", () => {
     };
 
     expect(await exportedWidthAt(2)).toBe((await exportedWidthAt(1)) * 2);
+    copySpy.mockRestore();
+  });
+
+  it("keeps a 3× export scale and sizes the export to match", async () => {
+    const copySpy = vi
+      .spyOn(clipboardModule, "copyTextToSystemClipboard")
+      .mockResolvedValue();
+    const exportedWidth = async () => {
+      const { exportedElements } = prepareElementsForExport(
+        testElements,
+        h.state,
+        false,
+      );
+      await exportCanvas(
+        "clipboard-svg",
+        exportedElements,
+        h.state,
+        {},
+        { exportingFrame: null },
+      );
+      const svg = copySpy.mock.lastCall![0] as string;
+      return Number(/<svg[^>]* width="([\d.]+)"/.exec(svg)![1]);
+    };
+
+    act(() => {
+      h.app.actionManager.executeAction(actionChangeExportScale, "ui", 2);
+    });
+    expect(h.state.exportScale).toBe(2);
+    const widthAt2 = await exportedWidth();
+
+    act(() => {
+      h.app.actionManager.executeAction(actionChangeExportScale, "ui", 3);
+    });
+    expect(h.state.exportScale).toBe(3);
+    expect(await exportedWidth()).toBe(widthAt2 * 1.5);
     copySpy.mockRestore();
   });
 
