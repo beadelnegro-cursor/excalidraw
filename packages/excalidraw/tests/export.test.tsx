@@ -4,6 +4,7 @@ import { SVG_NS } from "@excalidraw/common";
 
 import type { FileId, FractionalIndex } from "@excalidraw/element/types";
 
+import { actionChangeExportScale } from "../actions/actionExport";
 import { getDefaultAppState } from "../appState";
 import * as clipboardModule from "../clipboard";
 import { exportCanvas, prepareElementsForExport } from "../data";
@@ -15,10 +16,11 @@ import {
   decodeSvgBase64Payload,
   encodeSvgBase64Payload,
   exportScene,
+  getExportConfigFromAppState,
 } from "../scene/export";
 
 import { API } from "./helpers/api";
-import { render, waitFor } from "./test-utils";
+import { act, render, waitFor } from "./test-utils";
 
 const { h } = window;
 
@@ -260,5 +262,42 @@ describe("export", () => {
     // in case of regressions, save the SVG to a file and visually compare to:
     // src/tests/fixtures/svg-image-exporting-reference.svg
     expect(svgText).toMatchSnapshot(`svg export output`);
+  });
+
+  it("exports a PNG canvas at 3× when that scale is chosen", async () => {
+    const element = API.createElement({
+      type: "rectangle",
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 40,
+    });
+
+    const canvasAt = async (scale: number) => {
+      act(() => {
+        h.app.actionManager.executeAction(actionChangeExportScale, "ui", scale);
+      });
+      return exportScene({
+        type: "canvas",
+        data: {
+          elements: [element],
+          appState: h.state,
+          files: {},
+        },
+        config: {
+          ...getExportConfigFromAppState(h.state),
+          padding: 0,
+        },
+      });
+    };
+
+    const at2 = await canvasAt(2);
+    const at3 = await canvasAt(3);
+
+    expect(h.state.exportScale).toBe(3);
+    expect(at2.width).toBe(200);
+    expect(at2.height).toBe(80);
+    expect(at3.width).toBe(300);
+    expect(at3.height).toBe(120);
   });
 });
